@@ -13,6 +13,10 @@ import {
   unauthorizedResponse,
   forbiddenResponse,
   notFoundResponse,
+  badRequestResponse,
+  isValidUUID,
+  verifyCsrf,
+  applyRateLimit,
 } from "@/lib/api-utils";
 
 const MAX_NAME_LENGTH = 200;
@@ -38,6 +42,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   if (!session) return unauthorizedResponse();
 
   const { id } = await params;
+  if (!isValidUUID(id)) return badRequestResponse("Invalid project ID");
   const { project, error } = await getOwnedProject(id, session.user.id);
 
   if (error === "not_found") return notFoundResponse();
@@ -47,10 +52,17 @@ export async function GET(_request: NextRequest, { params }: Params) {
 }
 
 export async function PATCH(request: NextRequest, { params }: Params) {
+  const rateLimitError = applyRateLimit(request, "mutation");
+  if (rateLimitError) return rateLimitError;
+
+  const csrfError = await verifyCsrf(request);
+  if (csrfError) return csrfError;
+
   const session = await getSession();
   if (!session) return unauthorizedResponse();
 
   const { id } = await params;
+  if (!isValidUUID(id)) return badRequestResponse("Invalid project ID");
   const { project, error } = await getOwnedProject(id, session.user.id);
 
   if (error === "not_found") return notFoundResponse();
@@ -123,11 +135,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   return NextResponse.json(updated);
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params }: Params) {
+  const rateLimitError = applyRateLimit(request, "mutation");
+  if (rateLimitError) return rateLimitError;
+
+  const csrfError = await verifyCsrf(request);
+  if (csrfError) return csrfError;
+
   const session = await getSession();
   if (!session) return unauthorizedResponse();
 
   const { id } = await params;
+  if (!isValidUUID(id)) return badRequestResponse("Invalid project ID");
   const { project, error } = await getOwnedProject(id, session.user.id);
 
   if (error === "not_found") return notFoundResponse();

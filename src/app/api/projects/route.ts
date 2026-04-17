@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq, isNull, and, desc } from "drizzle-orm";
-import { getSession, unauthorizedResponse } from "@/lib/api-utils";
+import { getSession, unauthorizedResponse, verifyCsrf, applyRateLimit } from "@/lib/api-utils";
 
 const MAX_NAME_LENGTH = 200;
 const MAX_TOPIC_LENGTH = 500;
@@ -31,6 +31,12 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimitError = applyRateLimit(request, "mutation");
+  if (rateLimitError) return rateLimitError;
+
+  const csrfError = await verifyCsrf(request);
+  if (csrfError) return csrfError;
+
   const session = await getSession();
   if (!session) return unauthorizedResponse();
 

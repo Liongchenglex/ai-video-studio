@@ -11,15 +11,26 @@ import {
   unauthorizedResponse,
   forbiddenResponse,
   notFoundResponse,
+  badRequestResponse,
+  isValidUUID,
+  verifyCsrf,
+  applyRateLimit,
 } from "@/lib/api-utils";
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function POST(_request: NextRequest, { params }: Params) {
+export async function POST(request: NextRequest, { params }: Params) {
+  const rateLimitError = applyRateLimit(request, "mutation");
+  if (rateLimitError) return rateLimitError;
+
+  const csrfError = await verifyCsrf(request);
+  if (csrfError) return csrfError;
+
   const session = await getSession();
   if (!session) return unauthorizedResponse();
 
   const { id } = await params;
+  if (!isValidUUID(id)) return badRequestResponse("Invalid project ID");
 
   const [project] = await db
     .select()

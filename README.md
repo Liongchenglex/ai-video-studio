@@ -48,7 +48,7 @@ Required variables:
 
 | Variable | Description |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string (e.g. `postgresql://user:password@localhost:5432/ai_video_studio`) |
+| `DATABASE_URL` | PostgreSQL connection string from [Neon](https://neon.tech) (e.g. `postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require`) |
 | `BETTER_AUTH_SECRET` | Random secret for session encryption. Generate with `openssl rand -base64 32` |
 | `BETTER_AUTH_URL` | App URL, `http://localhost:3000` for development |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID (from Google Cloud Console) |
@@ -56,13 +56,10 @@ Required variables:
 
 ### 5. Set up the database
 
-Create the PostgreSQL database:
-
-```bash
-createdb ai_video_studio
-```
-
-Push the schema to the database:
+1. Sign up at [neon.tech](https://neon.tech) (free tier)
+2. Create a new project and copy the connection string
+3. Paste it as `DATABASE_URL` in your `.env`
+4. Push the schema:
 
 ```bash
 npm run db:push
@@ -130,8 +127,12 @@ src/
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project or select an existing one
-3. Navigate to **APIs & Services > Credentials**
-4. Click **Create Credentials > OAuth 2.0 Client IDs**
-5. Set application type to **Web application**
-6. Add authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
-7. Copy the Client ID and Client Secret to your `.env` file
+3. Navigate to **APIs & Services > OAuth consent screen**
+   - Choose **External** user type
+   - Fill in app name and your email
+   - Add your email as a **test user** (required while in testing mode)
+4. Navigate to **APIs & Services > Credentials**
+5. Click **Create Credentials > OAuth 2.0 Client IDs**
+6. Set application type to **Web application**
+7. Add authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
+8. Copy the Client ID and Client Secret to your `.env` file

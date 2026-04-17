@@ -1,36 +1,26 @@
 /**
- * Dashboard page. Shows all active projects for the current user
- * with status badges and a button to create new projects.
+ * Dashboard page (server component). Fetches session server-side
+ * and renders the project list with navbar.
  */
-"use client";
-
-import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
 import { Navbar } from "@/components/navbar";
-import { ProjectList } from "@/components/project-list";
+import { DashboardContent } from "@/components/dashboard-content";
 
-export default function DashboardPage() {
-  const router = useRouter();
+export default async function DashboardPage() {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    redirect("/login");
+  }
 
   return (
     <div className="min-h-screen bg-background">
-      <Navbar />
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">Projects</h1>
-            <p className="text-muted-foreground">
-              Manage your video projects
-            </p>
-          </div>
-          <Button onClick={() => router.push("/projects/new")}>
-            <Plus className="mr-2 h-4 w-4" />
-            New project
-          </Button>
-        </div>
-        <ProjectList />
-      </main>
+      <Navbar user={{ name: session.user.name, email: session.user.email }} />
+      <DashboardContent />
     </div>
   );
 }
