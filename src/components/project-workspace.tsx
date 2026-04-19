@@ -45,6 +45,8 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const [showTemplateSave, setShowTemplateSave] = useState(false);
+  const [templateSaved, setTemplateSaved] = useState(false);
+  const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
 
   const hasRefImages = refKeys.length > 0;
 
@@ -97,7 +99,7 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
     if (!templateName.trim()) return;
     setSavingTemplate(true);
     try {
-      await fetch("/api/style-templates", {
+      const res = await fetch("/api/style-templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -105,8 +107,12 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
           name: templateName.trim(),
         }),
       });
-      setShowTemplateSave(false);
-      setTemplateName("");
+      if (res.ok) {
+        setShowTemplateSave(false);
+        setTemplateName("");
+        setTemplateSaved(true);
+        setTemplateRefreshKey((k) => k + 1);
+      }
     } finally {
       setSavingTemplate(false);
     }
@@ -164,7 +170,9 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
             {/* Save as template */}
             {styleString && hasRefImages && (
               <div className="mt-4">
-                {showTemplateSave ? (
+                {templateSaved ? (
+                  <p className="text-sm text-muted-foreground">Template saved</p>
+                ) : showTemplateSave ? (
                   <div className="flex gap-2">
                     <Input
                       placeholder="Template name"
@@ -215,6 +223,7 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
 
           <StyleTemplateGrid
             projectId={project.id}
+            refreshKey={templateRefreshKey}
             onApply={handleApplyTemplate}
             onCreateNew={() => {
               setStyleString("");

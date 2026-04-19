@@ -19,12 +19,14 @@ interface Template {
 
 interface StyleTemplateGridProps {
   projectId: string;
+  refreshKey: number;
   onApply: (templateId: string) => void;
   onCreateNew: () => void;
 }
 
 export function StyleTemplateGrid({
   projectId: _projectId,
+  refreshKey,
   onApply,
   onCreateNew,
 }: StyleTemplateGridProps) {
@@ -34,6 +36,7 @@ export function StyleTemplateGrid({
 
   useEffect(() => {
     async function fetchTemplates() {
+      setLoading(true);
       try {
         const res = await fetch("/api/style-templates");
         if (res.ok) {
@@ -45,7 +48,7 @@ export function StyleTemplateGrid({
       }
     }
     fetchTemplates();
-  }, []);
+  }, [refreshKey]);
 
   async function handleApply(templateId: string) {
     setApplying(templateId);
