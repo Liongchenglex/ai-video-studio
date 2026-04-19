@@ -138,38 +138,4 @@ src/
 8. Copy the Client ID and Client Secret to your `.env` file
 
 
-cat > /workspace/download_models.py << 'SCRIPT'
-from huggingface_hub import snapshot_download
-import os
 
-# Paste your token between the quotes below
-HF_TOKEN = "your-huggingface-token-here"
-
-os.environ["HF_TOKEN"] = HF_TOKEN
-
-print("=" * 50)
-print("Step 1: Downloading LTX-2.3 main model (~40GB)")
-print("This will take 25-40 minutes")
-print("=" * 50)
-
-snapshot_download(
-    repo_id="Lightricks/LTX-2",
-    local_dir="/workspace/models/ltx-2",
-    ignore_patterns=["*.md", "*.txt", "*.gitattributes"],
-    token=HF_TOKEN
-)
-
-print("=" * 50)
-print("Step 2: Downloading IC-LoRA Pose adapter (~1GB)")
-print("=" * 50)
-
-snapshot_download(
-    repo_id="Lightricks/LTX-2-19b-IC-LoRA-Pose-Control",
-    local_dir="/workspace/models/ic-lora-pose",
-    token=HF_TOKEN
-)
-
-print("=" * 50)
-print("ALL DOWNLOADS COMPLETE")
-print("=" * 50)
-SCRIPT
