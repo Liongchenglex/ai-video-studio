@@ -11,6 +11,7 @@ import {
   uuid,
   index,
   pgEnum,
+  jsonb,
 } from "drizzle-orm/pg-core";
 
 // ─── BetterAuth tables ───────────────────────────────────────────────
@@ -90,9 +91,39 @@ export const projects = pgTable(
       .$onUpdate(() => new Date())
       .notNull(),
     deletedAt: timestamp("deleted_at"),
+
+    // ── Style profile (F-02) ──
+    styleString: text("style_string"),
+    styleRefPaths: jsonb("style_ref_paths").$type<string[]>(),
+    stylePreviewPath: text("style_preview_path"),
   },
   (table) => [index("projects_user_id_deleted_at_idx").on(table.userId, table.deletedAt)],
 );
 
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
+
+// ─── Style templates (F-02) ─────────────────────────────────────────
+
+export const styleTemplates = pgTable(
+  "style_templates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    styleString: text("style_string").notNull(),
+    refPaths: jsonb("ref_paths").$type<string[]>().notNull(),
+    previewPath: text("preview_path"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [index("style_templates_user_id_idx").on(table.userId)],
+);
+
+export type StyleTemplate = typeof styleTemplates.$inferSelect;
+export type NewStyleTemplate = typeof styleTemplates.$inferInsert;
