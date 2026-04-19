@@ -49,6 +49,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (!Array.isArray(body.sceneIds) || body.sceneIds.length === 0) {
     return badRequestResponse("sceneIds array is required");
   }
+  if (body.sceneIds.length > 200) {
+    return badRequestResponse("Too many scenes to reorder");
+  }
 
   for (const sceneId of body.sceneIds) {
     if (!isValidUUID(sceneId)) {

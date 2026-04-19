@@ -79,6 +79,15 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!body.voiceover?.trim() || !body.sceneDescription?.trim() || !body.imagePrompt?.trim()) {
     return badRequestResponse("voiceover, sceneDescription, and imagePrompt are required");
   }
+  if (body.voiceover.length > 5000) {
+    return badRequestResponse("Voiceover must be under 5000 characters");
+  }
+  if (body.sceneDescription.length > 2000) {
+    return badRequestResponse("Scene description must be under 2000 characters");
+  }
+  if (body.imagePrompt.length > 2000) {
+    return badRequestResponse("Image prompt must be under 2000 characters");
+  }
   if (!body.durationSeconds || body.durationSeconds < 1 || body.durationSeconds > 120) {
     return badRequestResponse("durationSeconds must be between 1 and 120");
   }
@@ -90,7 +99,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .where(eq(scenes.projectId, id))
     .orderBy(asc(scenes.sortOrder));
 
-  const insertAt = (body.insertAfter ?? existing.length - 1) + 1;
+  const insertAt = Math.max(0, Math.min((body.insertAfter ?? existing.length - 1) + 1, existing.length));
 
   // Insert the new scene
   const [newScene] = await db

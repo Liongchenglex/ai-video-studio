@@ -54,16 +54,19 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (body.voiceover !== undefined) {
     const v = body.voiceover.trim();
     if (v.length === 0) return badRequestResponse("Voiceover cannot be empty");
+    if (v.length > 5000) return badRequestResponse("Voiceover must be under 5000 characters");
     updates.voiceover = v;
   }
   if (body.sceneDescription !== undefined) {
     const d = body.sceneDescription.trim();
     if (d.length === 0) return badRequestResponse("Scene description cannot be empty");
+    if (d.length > 2000) return badRequestResponse("Scene description must be under 2000 characters");
     updates.sceneDescription = d;
   }
   if (body.imagePrompt !== undefined) {
     const p = body.imagePrompt.trim();
     if (p.length === 0) return badRequestResponse("Image prompt cannot be empty");
+    if (p.length > 2000) return badRequestResponse("Image prompt must be under 2000 characters");
     updates.imagePrompt = p;
   }
   if (body.durationSeconds !== undefined) {
