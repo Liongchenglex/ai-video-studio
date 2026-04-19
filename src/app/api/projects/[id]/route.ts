@@ -69,7 +69,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (error === "forbidden") return forbiddenResponse();
   if (project!.deletedAt) return notFoundResponse();
 
-  let body: { name?: string; topic?: string; status?: string };
+  let body: { name?: string; topic?: string; status?: string; brief?: string; targetDuration?: number; tone?: string };
   try {
     body = await request.json();
   } catch {
@@ -117,6 +117,39 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       );
     }
     updates.status = body.status;
+  }
+
+  if (body.brief !== undefined) {
+    const brief = body.brief.trim();
+    if (brief.length > 5000) {
+      return NextResponse.json(
+        { error: "Brief must be under 5000 characters" },
+        { status: 400 },
+      );
+    }
+    updates.brief = brief || null;
+  }
+
+  if (body.targetDuration !== undefined) {
+    const validDurations = [3, 5, 8, 10];
+    if (!validDurations.includes(body.targetDuration)) {
+      return NextResponse.json(
+        { error: `Target duration must be one of: ${validDurations.join(", ")} minutes` },
+        { status: 400 },
+      );
+    }
+    updates.targetDuration = body.targetDuration;
+  }
+
+  if (body.tone !== undefined) {
+    const validTones = ["educational", "entertaining", "documentary", "satirical"];
+    if (!validTones.includes(body.tone)) {
+      return NextResponse.json(
+        { error: `Tone must be one of: ${validTones.join(", ")}` },
+        { status: 400 },
+      );
+    }
+    updates.tone = body.tone;
   }
 
   if (Object.keys(updates).length === 0) {
