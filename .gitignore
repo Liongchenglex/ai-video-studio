@@ -45,3 +45,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local tooling
+.playwright-mcp/
+.agents/
+.claude/
+skills-lock.json
