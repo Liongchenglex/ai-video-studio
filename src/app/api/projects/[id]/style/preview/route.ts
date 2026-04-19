@@ -1,9 +1,11 @@
 /**
  * POST /api/projects/[id]/style/preview
  * Generates a style preview image using FLUX.1 Kontext.
- * Requires style string and reference images to be set on the project.
+ * Downloads the generated image and stores it in R2 so it persists
+ * beyond fal.ai's temporary URL expiry.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -17,6 +19,7 @@ import {
   applyRateLimit,
 } from "@/lib/api-utils";
 import { generateStylePreview } from "@/lib/style-preview";
+import { r2Client, stylePreviewKey, getDownloadUrl } from "@/lib/r2";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -55,12 +58,33 @@ export async function POST(request: NextRequest, { params }: Params) {
       project.styleRefPaths,
     );
 
+    // Download from fal.ai and upload to R2 for permanent storage
+    const imageRes = await fetch(imageUrl);
+    if (!imageRes.ok) {
+      throw new Error("Failed to download preview image from fal.ai");
+    }
+    const imageBuffer = Buffer.from(await imageRes.arrayBuffer());
+    const contentType = imageRes.headers.get("content-type") || "image/png";
+
+    const key = stylePreviewKey(id);
+    await r2Client.send(
+      new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME!,
+        Key: key,
+        Body: imageBuffer,
+        ContentType: contentType,
+      }),
+    );
+
+    // Store the R2 key (not the fal.ai URL) on the project
     await db
       .update(projects)
-      .set({ stylePreviewPath: imageUrl })
+      .set({ stylePreviewPath: key })
       .where(and(eq(projects.id, id), eq(projects.userId, session.user.id)));
 
-    return NextResponse.json({ previewUrl: imageUrl });
+    // Return a presigned download URL for the client
+    const previewUrl = await getDownloadUrl(key);
+    return NextResponse.json({ previewUrl });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Preview generation failed";
