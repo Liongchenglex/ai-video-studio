@@ -12,6 +12,7 @@ import {
   index,
   pgEnum,
   jsonb,
+  integer,
 } from "drizzle-orm/pg-core";
 
 // ─── BetterAuth tables ───────────────────────────────────────────────
@@ -68,6 +69,13 @@ export const verification = pgTable("verification", {
 
 // ─── Application tables ──────────────────────────────────────────────
 
+export const toneEnum = pgEnum("tone", [
+  "educational",
+  "entertaining",
+  "documentary",
+  "satirical",
+]);
+
 export const projectStatusEnum = pgEnum("project_status", [
   "draft",
   "generating",
@@ -96,6 +104,11 @@ export const projects = pgTable(
     styleString: text("style_string"),
     styleRefPaths: jsonb("style_ref_paths").$type<string[]>(),
     stylePreviewPath: text("style_preview_path"),
+
+    // ── Video brief (F-03) ──
+    brief: text("brief"),
+    targetDuration: integer("target_duration").default(5),
+    tone: toneEnum("tone").default("educational"),
   },
   (table) => [index("projects_user_id_deleted_at_idx").on(table.userId, table.deletedAt)],
 );
@@ -127,3 +140,32 @@ export const styleTemplates = pgTable(
 
 export type StyleTemplate = typeof styleTemplates.$inferSelect;
 export type NewStyleTemplate = typeof styleTemplates.$inferInsert;
+
+// ─── Scenes (F-03) ──────────────────────────────────────────────────
+
+export const scenes = pgTable(
+  "scenes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull(),
+    voiceover: text("voiceover").notNull(),
+    sceneDescription: text("scene_description").notNull(),
+    imagePrompt: text("image_prompt").notNull(),
+    durationSeconds: integer("duration_seconds").notNull(),
+    isHook: boolean("is_hook").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("scenes_project_id_sort_order_idx").on(table.projectId, table.sortOrder),
+  ],
+);
+
+export type Scene = typeof scenes.$inferSelect;
+export type NewScene = typeof scenes.$inferInsert;
