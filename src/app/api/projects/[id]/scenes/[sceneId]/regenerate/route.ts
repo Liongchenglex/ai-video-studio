@@ -1,11 +1,12 @@
 /**
  * POST /api/projects/[id]/scenes/[sceneId]/regenerate
- * Regenerates a single scene using Claude, preserving surrounding context.
+ * Regenerates only the image prompt for a scene.
+ * Voiceover and scene description are user-owned and not modified.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, scenes } from "@/lib/db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -15,7 +16,7 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
-import { regenerateScene } from "@/lib/script-generation";
+import { regenerateImagePrompt } from "@/lib/script-generation";
 
 type Params = { params: Promise<{ id: string; sceneId: string }> };
 
@@ -40,52 +41,33 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   if (!project || project.deletedAt) return notFoundResponse();
 
-  if (!project.brief) {
-    return badRequestResponse("Project has no brief");
-  }
-
-  const allScenes = await db
+  const [scene] = await db
     .select()
     .from(scenes)
-    .where(eq(scenes.projectId, id))
-    .orderBy(asc(scenes.sortOrder));
+    .where(and(eq(scenes.id, sceneId), eq(scenes.projectId, id)))
+    .limit(1);
 
-  const sceneIndex = allScenes.findIndex((s) => s.id === sceneId);
-  if (sceneIndex === -1) return notFoundResponse();
-
-  const currentScene = allScenes[sceneIndex];
-  const prevScene = sceneIndex > 0 ? allScenes[sceneIndex - 1] : undefined;
-  const nextScene = sceneIndex < allScenes.length - 1 ? allScenes[sceneIndex + 1] : undefined;
+  if (!scene) return notFoundResponse();
 
   try {
-    const regenerated = await regenerateScene({
-      brief: project.brief,
+    const newImagePrompt = await regenerateImagePrompt({
+      sceneDescription: scene.sceneDescription,
+      voiceover: scene.voiceover,
       tone: project.tone ?? "educational",
       styleString: project.styleString,
-      sceneNumber: sceneIndex + 1,
-      totalScenes: allScenes.length,
-      previousSceneVoiceover: prevScene?.voiceover,
-      nextSceneVoiceover: nextScene?.voiceover,
-      currentVoiceover: currentScene.voiceover,
-      currentSceneDescription: currentScene.sceneDescription,
     });
 
     const [updated] = await db
       .update(scenes)
-      .set({
-        voiceover: regenerated.voiceover,
-        sceneDescription: regenerated.scene_description,
-        imagePrompt: regenerated.image_prompt,
-        durationSeconds: regenerated.duration_seconds,
-      })
+      .set({ imagePrompt: newImagePrompt })
       .where(and(eq(scenes.id, sceneId), eq(scenes.projectId, id)))
       .returning();
 
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Scene regeneration failed:", error instanceof Error ? error.message : error);
+    console.error("Image prompt regeneration failed:", error instanceof Error ? error.message : error);
     return NextResponse.json(
-      { error: "Scene regeneration failed. Please try again." },
+      { error: "Image prompt regeneration failed. Please try again." },
       { status: 500 },
     );
   }

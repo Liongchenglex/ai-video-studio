@@ -178,63 +178,36 @@ export async function generateScript(input: GenerateScriptInput): Promise<Genera
 }
 
 /**
- * Regenerates a single scene given context about the surrounding scenes.
- * Does not use web search — relies on existing script context.
+ * Regenerates only the image prompt for a scene.
+ * The voiceover and scene description are user-owned and not touched.
+ * Returns a fresh image prompt based on the scene description and style context.
  */
-export async function regenerateScene(input: {
-  brief: string;
+export async function regenerateImagePrompt(input: {
+  sceneDescription: string;
+  voiceover: string;
   tone: string;
   styleString?: string | null;
-  sceneNumber: number;
-  totalScenes: number;
-  previousSceneVoiceover?: string;
-  nextSceneVoiceover?: string;
-  currentVoiceover: string;
-  currentSceneDescription: string;
-}): Promise<GeneratedScene> {
-  const contextParts: string[] = [];
-  if (input.previousSceneVoiceover) {
-    contextParts.push(`Previous scene narration: "${input.previousSceneVoiceover}"`);
-  }
-  contextParts.push(`Current scene (to regenerate) narration: "${input.currentVoiceover}"`);
-  contextParts.push(`Current scene description: "${input.currentSceneDescription}"`);
-  if (input.nextSceneVoiceover) {
-    contextParts.push(`Next scene narration: "${input.nextSceneVoiceover}"`);
-  }
-
-  const prompt = `Regenerate scene ${input.sceneNumber} of ${input.totalScenes} for this video.
-
-Video brief: ${input.brief}
-
-Context:
-${contextParts.join("\n")}
-
-Generate a fresh version of this scene that fits naturally between its neighbors. Keep the same general topic but improve the voiceover, scene description, and image prompt. Maintain the same approximate duration.`;
+}): Promise<string> {
+  const styleContext = input.styleString
+    ? ` Visual style to match: ${input.styleString}`
+    : "";
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 2000,
-    system: `You are a professional video scriptwriter. Tone: ${input.tone}.${input.styleString ? ` Visual style: ${input.styleString}` : ""}\n\nUse the save_script tool to return exactly one scene.`,
-    tools: [SCRIPT_TOOL],
-    tool_choice: { type: "tool", name: "save_script" },
+    max_tokens: 500,
+    system: `You are an AI image prompt specialist. Generate a detailed image generation prompt based on the scene description and voiceover context provided. The prompt should describe composition, subject, mood, colors, and visual details suitable for an AI image generator.${styleContext}\n\nReturn ONLY the image prompt text. No explanation. No preamble.`,
     messages: [
       {
         role: "user",
-        content: prompt,
+        content: `Scene description: ${input.sceneDescription}\n\nVoiceover context: ${input.voiceover}\n\nTone: ${input.tone}`,
       },
     ],
   });
 
-  const toolUse = response.content.find((block) => block.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Claude did not return a tool use response");
+  const textBlock = response.content.find((block) => block.type === "text");
+  if (!textBlock || textBlock.type !== "text") {
+    throw new Error("Claude returned no text response");
   }
 
-  const result = toolUse.input as { scenes: GeneratedScene[] };
-  if (!result.scenes || result.scenes.length === 0) {
-    throw new Error("Claude returned no scene");
-  }
-
-  const recalculated = recalculateDurations(result.scenes);
-  return recalculated[0];
+  return textBlock.text.trim();
 }
