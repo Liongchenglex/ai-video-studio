@@ -108,32 +108,29 @@ function recalculateDurations(scenes: GeneratedScene[]): GeneratedScene[] {
 }
 
 /**
- * Generates a full video script from a brief using Claude with web search + tool use.
- * Claude researches the topic first, then generates the structured script.
+ * Runs the multi-turn conversation with Claude (web search → save_script).
+ * Returns the raw generated scenes from the tool call.
  */
-export async function generateScript(input: GenerateScriptInput): Promise<GeneratedScene[]> {
+async function runGeneration(
+  systemPrompt: string,
+  userMessage: string,
+): Promise<GeneratedScene[]> {
   const tools: Anthropic.Tool[] = [WEB_SEARCH_TOOL, SCRIPT_TOOL];
 
-  // Start the conversation — Claude will search first, then call save_script
   let messages: Anthropic.MessageParam[] = [
-    {
-      role: "user",
-      content: input.brief,
-    },
+    { role: "user", content: userMessage },
   ];
 
-  // Loop to handle multi-turn: web searches → save_script
   const maxIterations = 10;
   for (let i = 0; i < maxIterations; i++) {
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 16000,
-      system: buildSystemPrompt(input),
+      system: systemPrompt,
       tools,
       messages,
     });
 
-    // Check if save_script was called
     const saveToolUse = response.content.find(
       (block) => block.type === "tool_use" && block.name === "save_script",
     );
@@ -143,38 +140,61 @@ export async function generateScript(input: GenerateScriptInput): Promise<Genera
       if (!result.scenes || !Array.isArray(result.scenes) || result.scenes.length === 0) {
         throw new Error("Claude returned an empty script");
       }
-      return recalculateDurations(result.scenes);
+      return result.scenes;
     }
 
-    // If stop_reason is "end_turn" with no tool use, Claude finished without calling save_script
     if (response.stop_reason === "end_turn") {
       throw new Error("Claude finished without generating a script");
     }
 
-    // Otherwise, Claude used web_search or other server tools — continue the conversation
-    // Add assistant response to messages
     messages = [
       ...messages,
       { role: "assistant", content: response.content },
     ];
 
-    // For server-handled tools (web_search), the API handles them automatically
-    // We only need to continue if stop_reason indicates more tool use
     if (response.stop_reason === "tool_use") {
-      // Check if there are any client-side tools that need results
       const clientToolUses = response.content.filter(
         (block) => block.type === "tool_use" && block.name !== "web_search",
       );
-
       if (clientToolUses.length === 0) {
-        // All tool uses were server-handled (web_search) — the response already contains results
-        // Continue the loop; the API will include search results in the next response
         continue;
       }
     }
   }
 
   throw new Error("Script generation exceeded maximum iterations");
+}
+
+/**
+ * Generates a full video script from a brief using Claude with web search + tool use.
+ * If the first pass is too short, Claude expands the script in a second pass.
+ */
+export async function generateScript(input: GenerateScriptInput): Promise<GeneratedScene[]> {
+  const systemPrompt = buildSystemPrompt(input);
+  let scenes = recalculateDurations(await runGeneration(systemPrompt, input.brief));
+
+  // Check if the script is too short — if so, expand it
+  const targetSeconds = input.targetDurationMinutes * 60;
+  const actualSeconds = scenes.reduce((sum, s) => sum + s.duration_seconds, 0);
+  const shortfall = ((targetSeconds - actualSeconds) / targetSeconds) * 100;
+
+  if (shortfall > 15) {
+    const expandPrompt = `The script below is too short. It currently runs ${actualSeconds} seconds but the target is ${targetSeconds} seconds (${input.targetDurationMinutes} minutes). That's ${Math.round(shortfall)}% under target.
+
+Expand the script by:
+1. Adding more scenes to cover additional aspects of the topic
+2. Expanding existing voiceovers with more detail and depth
+3. Adding transitional scenes between major sections
+
+Current script:
+${scenes.map((s) => `Scene ${s.scene_id}: [${s.duration_seconds}s] ${s.voiceover.substring(0, 100)}...`).join("\n")}
+
+Generate the complete expanded script using the save_script tool. Include ALL scenes (existing + new), not just the additions. The total must reach approximately ${targetSeconds} seconds.`;
+
+    scenes = recalculateDurations(await runGeneration(systemPrompt, expandPrompt));
+  }
+
+  return scenes;
 }
 
 /**

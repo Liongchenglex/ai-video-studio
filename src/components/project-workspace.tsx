@@ -64,6 +64,7 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
 
   const hasRefImages = refKeys.length > 0;
   const [scenes, setScenes] = useState(initialScenes);
+  const [scriptKey, setScriptKey] = useState(0);
   const [generatingScript, setGeneratingScript] = useState(false);
 
   const handleUploadComplete = useCallback(
@@ -143,6 +144,7 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
       if (res.ok) {
         const data = await res.json();
         setScenes(data.scenes);
+        setScriptKey((k) => k + 1);
       }
     } finally {
       setGeneratingScript(false);
@@ -283,6 +285,7 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
         <>
           <Separator className="my-8" />
           <ScriptTable
+            key={scriptKey}
             projectId={project.id}
             initialScenes={scenes}
             targetDuration={project.targetDuration}
