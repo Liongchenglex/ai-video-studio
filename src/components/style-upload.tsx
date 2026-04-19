@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Upload, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -43,6 +43,17 @@ export function StyleUpload({
       error: null,
     })),
   );
+
+  // Notify parent whenever the set of keys changes (not during render)
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    const allKeys = slots.map((s) => s.key).filter(Boolean) as string[];
+    onUploadComplete(allKeys);
+  }, [slots.map((s) => s.key).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const uploadFile = useCallback(
     async (file: File, slotIndex: number) => {
@@ -105,16 +116,13 @@ export function StyleUpload({
 
         const previewUrl = URL.createObjectURL(file);
 
-        setSlots((prev) => {
-          const updated = prev.map((s, i) =>
+        setSlots((prev) =>
+          prev.map((s, i) =>
             i === slotIndex
               ? { key, previewUrl, uploading: false, error: null }
               : s,
-          );
-          const allKeys = updated.map((s) => s.key).filter(Boolean) as string[];
-          onUploadComplete(allKeys);
-          return updated;
-        });
+          ),
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : "Upload failed";
         setSlots((prev) =>
@@ -124,24 +132,18 @@ export function StyleUpload({
         );
       }
     },
-    [projectId, onUploadComplete],
+    [projectId],
   );
 
-  const removeSlot = useCallback(
-    (slotIndex: number) => {
-      setSlots((prev) => {
-        const updated = prev.map((s, i) =>
-          i === slotIndex
-            ? { key: null, previewUrl: null, uploading: false, error: null }
-            : s,
-        );
-        const allKeys = updated.map((s) => s.key).filter(Boolean) as string[];
-        onUploadComplete(allKeys);
-        return updated;
-      });
-    },
-    [onUploadComplete],
-  );
+  const removeSlot = useCallback((slotIndex: number) => {
+    setSlots((prev) =>
+      prev.map((s, i) =>
+        i === slotIndex
+          ? { key: null, previewUrl: null, uploading: false, error: null }
+          : s,
+      ),
+    );
+  }, []);
 
   const handleDrop = useCallback(
     (e: React.DragEvent, slotIndex: number) => {
