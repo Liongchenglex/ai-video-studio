@@ -24,10 +24,13 @@ export async function generateStylePreview(
 
   const prompt = `A simple outdoor scene that showcases the visual style — ${styleString}`;
 
-  const result = await fal.subscribe("fal-ai/flux-kontext/general", {
+  const result = await fal.subscribe("fal-ai/flux-pro/kontext/max/multi", {
     input: {
       prompt,
       image_urls: refUrls,
+      num_images: 1,
+      output_format: "png",
+      safety_tolerance: "2",
     },
   });
 
