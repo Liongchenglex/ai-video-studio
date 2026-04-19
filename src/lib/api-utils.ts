@@ -62,6 +62,7 @@ export function badRequestResponse(message = "Bad request") {
 const RATE_LIMITS = {
   auth: { maxRequests: 10, windowSeconds: 60 },
   mutation: { maxRequests: 30, windowSeconds: 60 },
+  generation: { maxRequests: 5, windowSeconds: 60 },
 } as const;
 
 /**

@@ -24,7 +24,7 @@ import { r2Client, stylePreviewKey, getDownloadUrl } from "@/lib/r2";
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Params) {
-  const rateLimitError = applyRateLimit(request, "mutation");
+  const rateLimitError = applyRateLimit(request, "generation");
   if (rateLimitError) return rateLimitError;
 
   const csrfError = await verifyCsrf(request);
@@ -86,8 +86,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     const previewUrl = await getDownloadUrl(key);
     return NextResponse.json({ previewUrl });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Preview generation failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("Preview generation failed:", error instanceof Error ? error.message : error);
+    return NextResponse.json(
+      { error: "Preview generation failed. Please try again." },
+      { status: 500 },
+    );
   }
 }

@@ -73,6 +73,10 @@ export async function POST(request: NextRequest, { params }: Params) {
       errors.push("Each file must have filename, contentType, and size");
       continue;
     }
+    if (file.filename.length > 255) {
+      errors.push(`${file.filename.slice(0, 20)}...: filename too long`);
+      continue;
+    }
     if (!ALLOWED_TYPES.includes(file.contentType)) {
       errors.push(`${file.filename}: must be JPEG, PNG, or WebP`);
     }

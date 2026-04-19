@@ -21,7 +21,7 @@ import { analyseStyleImages } from "@/lib/style-analysis";
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Params) {
-  const rateLimitError = applyRateLimit(request, "mutation");
+  const rateLimitError = applyRateLimit(request, "generation");
   if (rateLimitError) return rateLimitError;
 
   const csrfError = await verifyCsrf(request);
@@ -56,16 +56,19 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     return NextResponse.json({ styleString });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Style analysis failed";
+    const rawMessage = error instanceof Error ? error.message : "";
+    console.error("Style analysis failed:", rawMessage);
 
-    if (message.includes("content policy")) {
+    if (rawMessage.includes("content policy")) {
       return NextResponse.json(
         { error: "Images were flagged by content policy. Please use different reference images." },
         { status: 422 },
       );
     }
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Style analysis failed. Please try again." },
+      { status: 500 },
+    );
   }
 }

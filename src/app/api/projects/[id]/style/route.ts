@@ -100,6 +100,15 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.styleRefPaths.length > 3) {
       return badRequestResponse("Maximum 3 reference images allowed");
     }
+    const expectedPrefix = `projects/${id}/style-refs/`;
+    for (const path of body.styleRefPaths) {
+      if (typeof path !== "string" || path.length === 0 || path.length > 500) {
+        return badRequestResponse("Invalid reference image path");
+      }
+      if (!path.startsWith(expectedPrefix)) {
+        return badRequestResponse("Reference image path does not belong to this project");
+      }
+    }
     updates.styleRefPaths = body.styleRefPaths;
   }
 
