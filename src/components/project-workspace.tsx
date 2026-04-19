@@ -5,6 +5,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { VideoBrief } from "@/components/video-brief";
+import { ScriptTable } from "@/components/script-table";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +28,19 @@ interface ProjectWorkspaceProps {
     styleRefPaths: string[] | null;
     styleRefUrls: string[];
     stylePreviewUrl: string | null;
+    brief: string | null;
+    targetDuration: number;
+    tone: string;
   };
+  initialScenes: Array<{
+    id: string;
+    sortOrder: number;
+    voiceover: string;
+    sceneDescription: string;
+    imagePrompt: string;
+    durationSeconds: number;
+    isHook: boolean;
+  }>;
 }
 
 const statusLabel: Record<string, string> = {
@@ -36,7 +50,7 @@ const statusLabel: Record<string, string> = {
   published: "Published",
 };
 
-export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
+export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspaceProps) {
   const router = useRouter();
   const [styleString, setStyleString] = useState(project.styleString || "");
   const [refKeys, setRefKeys] = useState<string[]>(project.styleRefPaths || []);
@@ -49,6 +63,8 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
   const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
 
   const hasRefImages = refKeys.length > 0;
+  const [scenes, setScenes] = useState(initialScenes);
+  const [generatingScript, setGeneratingScript] = useState(false);
 
   const handleUploadComplete = useCallback(
     async (keys: string[]) => {
@@ -117,6 +133,21 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
       setSavingTemplate(false);
     }
   }, [project.id, templateName]);
+
+  const handleGenerateScript = useCallback(async () => {
+    setGeneratingScript(true);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/script/generate`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setScenes(data.scenes);
+      }
+    } finally {
+      setGeneratingScript(false);
+    }
+  }, [project.id]);
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
@@ -233,6 +264,31 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
           />
         </div>
       </div>
+
+      <Separator className="my-8" />
+
+      {/* Video Brief Section */}
+      <VideoBrief
+        projectId={project.id}
+        initialBrief={project.brief || ""}
+        initialDuration={project.targetDuration}
+        initialTone={project.tone}
+        onGenerateScript={handleGenerateScript}
+        generating={generatingScript}
+        hasScenes={scenes.length > 0}
+      />
+
+      {/* Script Table */}
+      {scenes.length > 0 && (
+        <>
+          <Separator className="my-8" />
+          <ScriptTable
+            projectId={project.id}
+            initialScenes={scenes}
+            targetDuration={project.targetDuration}
+          />
+        </>
+      )}
     </main>
   );
 }

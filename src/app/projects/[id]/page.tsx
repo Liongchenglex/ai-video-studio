@@ -6,8 +6,8 @@ import { headers } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { projects, scenes } from "@/lib/db/schema";
+import { eq, asc } from "drizzle-orm";
 import { Navbar } from "@/components/navbar";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import { isValidUUID } from "@/lib/api-utils";
@@ -42,6 +42,12 @@ export default async function ProjectPage({
     notFound();
   }
 
+  const projectScenes = await db
+    .select()
+    .from(scenes)
+    .where(eq(scenes.projectId, id))
+    .orderBy(asc(scenes.sortOrder));
+
   // Generate download URLs for existing reference images
   const styleRefUrls = project.styleRefPaths
     ? await Promise.all(project.styleRefPaths.map(getDownloadUrl))
@@ -64,7 +70,11 @@ export default async function ProjectPage({
           styleRefPaths: project.styleRefPaths,
           styleRefUrls,
           stylePreviewUrl,
+          brief: project.brief,
+          targetDuration: project.targetDuration ?? 5,
+          tone: project.tone ?? "educational",
         }}
+        initialScenes={projectScenes}
       />
     </div>
   );
