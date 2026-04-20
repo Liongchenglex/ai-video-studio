@@ -1,22 +1,20 @@
 /**
- * Project workspace content (client component). Displays project
- * details and the style profile section (F-02).
+ * Project workspace orchestrator (client component).
+ * Manages the 3-step stepper flow: Concept → Style → Script.
+ * All state lives here; step components are pure renderers.
  */
 "use client";
 
 import { useState, useCallback } from "react";
-import { VideoBrief } from "@/components/video-brief";
-import { ScriptTable } from "@/components/script-table";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
-import { StyleUpload } from "@/components/style-upload";
-import { StyleEditor } from "@/components/style-editor";
-import { StylePreviewPanel } from "@/components/style-preview-panel";
-import { StyleTemplateGrid } from "@/components/style-template-grid";
+import { ProjectStepper } from "@/components/project-stepper";
+import { VideoBrief } from "@/components/video-brief";
+import { StepStyle } from "@/components/step-style";
+import { StepScript } from "@/components/step-script";
 
 interface ProjectWorkspaceProps {
   project: {
@@ -52,6 +50,20 @@ const statusLabel: Record<string, string> = {
 
 export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspaceProps) {
   const router = useRouter();
+
+  // ── Step navigation ──
+  const [currentStep, setCurrentStep] = useState(() => {
+    if (initialScenes.length > 0) return 2;
+    if (project.styleString || (project.styleRefPaths && project.styleRefPaths.length > 0)) return 1;
+    return 0;
+  });
+
+  // ── Brief state ──
+  const [brief, setBrief] = useState(project.brief || "");
+  const [targetDuration, setTargetDuration] = useState(project.targetDuration);
+  const [tone, setTone] = useState(project.tone);
+
+  // ── Style state ──
   const [styleString, setStyleString] = useState(project.styleString || "");
   const [refKeys, setRefKeys] = useState<string[]>(project.styleRefPaths || []);
   const [previewUrl, setPreviewUrl] = useState<string | null>(project.stylePreviewUrl);
@@ -62,11 +74,33 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
   const [templateSaved, setTemplateSaved] = useState(false);
   const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
 
-  const hasRefImages = refKeys.length > 0;
+  // ── Script state ──
   const [scenes, setScenes] = useState(initialScenes);
   const [scriptKey, setScriptKey] = useState(0);
   const [generatingScript, setGeneratingScript] = useState(false);
 
+  const hasRefImages = refKeys.length > 0;
+
+  // ── Step completion ──
+  const steps = [
+    {
+      label: "Concept",
+      description: "Video brief",
+      completed: brief.trim().length > 0,
+    },
+    {
+      label: "Style",
+      description: "Visual identity",
+      completed: styleString.length > 0 || hasRefImages,
+    },
+    {
+      label: "Script",
+      description: "Scene breakdown",
+      completed: scenes.length > 0,
+    },
+  ];
+
+  // ── Style handlers ──
   const handleUploadComplete = useCallback(
     async (keys: string[]) => {
       setRefKeys(keys);
@@ -135,6 +169,7 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
     }
   }, [project.id, templateName]);
 
+  // ── Script handlers ──
   const handleGenerateScript = useCallback(async () => {
     setGeneratingScript(true);
     try {
@@ -172,125 +207,73 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
         <Badge variant="secondary">{statusLabel[project.status]}</Badge>
       </div>
 
-      <Separator className="mb-8" />
-
-      {/* Style Profile Section */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <section>
-            <h2 className="mb-4 text-lg font-semibold">Style profile</h2>
-
-            {/* Reference image upload */}
-            <div className="mb-6">
-              <h3 className="mb-2 text-sm font-medium">Reference images</h3>
-              <StyleUpload
-                projectId={project.id}
-                existingUrls={project.styleRefUrls}
-                existingKeys={project.styleRefPaths || []}
-                onUploadComplete={handleUploadComplete}
-              />
-            </div>
-
-            {/* Style editor */}
-            <StyleEditor
-              projectId={project.id}
-              initialStyleString={styleString}
-              hasRefImages={hasRefImages}
-              onSave={handleStyleSave}
-              onPreviewRequest={handlePreviewRequest}
-            />
-
-            {/* Save as template */}
-            {styleString && hasRefImages && (
-              <div className="mt-4">
-                {templateSaved ? (
-                  <p className="text-sm text-muted-foreground">Template saved</p>
-                ) : showTemplateSave ? (
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Template name"
-                      value={templateName}
-                      onChange={(e) => setTemplateName(e.target.value)}
-                      maxLength={100}
-                      className="max-w-xs"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={handleSaveTemplate}
-                      disabled={savingTemplate || !templateName.trim()}
-                    >
-                      <Save className="mr-1 h-3 w-3" />
-                      {savingTemplate ? "Saving..." : "Save"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setShowTemplateSave(false)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowTemplateSave(true)}
-                  >
-                    Save as template
-                  </Button>
-                )}
-              </div>
-            )}
-          </section>
-        </div>
-
-        {/* Right column: preview + templates */}
-        <div className="space-y-6">
-          <StylePreviewPanel
-            projectId={project.id}
-            previewUrl={previewUrl}
-            generating={generatingPreview}
-          />
-
-          <Separator />
-
-          <StyleTemplateGrid
-            projectId={project.id}
-            refreshKey={templateRefreshKey}
-            onApply={handleApplyTemplate}
-            onCreateNew={() => {
-              setStyleString("");
-              setRefKeys([]);
-              setPreviewUrl(null);
-            }}
-          />
-        </div>
-      </div>
-
-      <Separator className="my-8" />
-
-      {/* Video Brief Section */}
-      <VideoBrief
-        projectId={project.id}
-        initialBrief={project.brief || ""}
-        initialDuration={project.targetDuration}
-        initialTone={project.tone}
-        onGenerateScript={handleGenerateScript}
-        generating={generatingScript}
-        hasScenes={scenes.length > 0}
+      <ProjectStepper
+        currentStep={currentStep}
+        steps={steps}
+        onStepClick={setCurrentStep}
       />
 
-      {/* Script Table */}
-      {scenes.length > 0 && (
-        <>
-          <Separator className="my-8" />
-          <ScriptTable
-            key={scriptKey}
-            projectId={project.id}
-            initialScenes={scenes}
-            targetDuration={project.targetDuration}
-          />
-        </>
+      <Separator className="mb-8" />
+
+      {currentStep === 0 && (
+        <VideoBrief
+          projectId={project.id}
+          initialBrief={brief}
+          initialDuration={targetDuration}
+          initialTone={tone}
+          onNext={() => setCurrentStep(1)}
+          onBriefChange={setBrief}
+          onDurationChange={setTargetDuration}
+          onToneChange={setTone}
+        />
+      )}
+
+      {currentStep === 1 && (
+        <StepStyle
+          projectId={project.id}
+          styleString={styleString}
+          styleRefUrls={project.styleRefUrls}
+          styleRefPaths={refKeys}
+          previewUrl={previewUrl}
+          hasRefImages={hasRefImages}
+          generatingPreview={generatingPreview}
+          templateRefreshKey={templateRefreshKey}
+          templateSaved={templateSaved}
+          showTemplateSave={showTemplateSave}
+          savingTemplate={savingTemplate}
+          templateName={templateName}
+          onUploadComplete={handleUploadComplete}
+          onStyleSave={handleStyleSave}
+          onPreviewRequest={handlePreviewRequest}
+          onApplyTemplate={handleApplyTemplate}
+          onSaveTemplate={handleSaveTemplate}
+          onSetTemplateName={setTemplateName}
+          onShowTemplateSave={setShowTemplateSave}
+          onCreateNewStyle={() => {
+            setStyleString("");
+            setRefKeys([]);
+            setPreviewUrl(null);
+          }}
+          onNext={() => setCurrentStep(2)}
+          onBack={() => setCurrentStep(0)}
+        />
+      )}
+
+      {currentStep === 2 && (
+        <StepScript
+          projectId={project.id}
+          brief={brief}
+          duration={targetDuration}
+          tone={tone}
+          scenes={scenes}
+          scriptKey={scriptKey}
+          generatingScript={generatingScript}
+          onBriefChange={setBrief}
+          onDurationChange={setTargetDuration}
+          onToneChange={setTone}
+          onGenerateScript={handleGenerateScript}
+          onBack={() => setCurrentStep(1)}
+        />
       )}
     </main>
   );
