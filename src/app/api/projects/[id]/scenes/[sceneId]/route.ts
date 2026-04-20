@@ -42,7 +42,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   if (!await verifyOwnership(id, session.user.id)) return notFoundResponse();
 
-  let body: { voiceover?: string; sceneDescription?: string; imagePrompt?: string; durationSeconds?: number };
+  let body: { voiceover?: string; sceneDescription?: string; durationSeconds?: number };
   try {
     body = await request.json();
   } catch {
@@ -62,12 +62,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (d.length === 0) return badRequestResponse("Scene description cannot be empty");
     if (d.length > 2000) return badRequestResponse("Scene description must be under 2000 characters");
     updates.sceneDescription = d;
-  }
-  if (body.imagePrompt !== undefined) {
-    const p = body.imagePrompt.trim();
-    if (p.length === 0) return badRequestResponse("Image prompt cannot be empty");
-    if (p.length > 2000) return badRequestResponse("Image prompt must be under 2000 characters");
-    updates.imagePrompt = p;
   }
   if (body.durationSeconds !== undefined) {
     if (body.durationSeconds < 1 || body.durationSeconds > 120) {

@@ -153,7 +153,6 @@ export const scenes = pgTable(
     sortOrder: integer("sort_order").notNull(),
     voiceover: text("voiceover").notNull(),
     sceneDescription: text("scene_description").notNull(),
-    imagePrompt: text("image_prompt").notNull(),
     durationSeconds: integer("duration_seconds").notNull(),
     isHook: boolean("is_hook").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),

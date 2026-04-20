@@ -19,7 +19,6 @@ export interface GeneratedScene {
   scene_id: number;
   voiceover: string;
   scene_description: string;
-  image_prompt: string;
   duration_seconds: number;
   is_hook: boolean;
 }
@@ -37,12 +36,11 @@ const SCRIPT_TOOL: Anthropic.Tool = {
           properties: {
             scene_id: { type: "number", description: "Sequential scene number starting from 1" },
             voiceover: { type: "string", description: "The narration text spoken during this scene. Must be substantial — aim for 40-80 words per scene." },
-            scene_description: { type: "string", description: "Visual description of what happens on screen" },
-            image_prompt: { type: "string", description: "Detailed image generation prompt for the scene's key visual" },
+            scene_description: { type: "string", description: "Detailed visual description of the scene. Must include: specific subject/action, composition (wide shot, close-up, etc.), color palette, lighting, mood, and visual details. This will be used directly as an AI image generation prompt — be vivid and specific, not generic." },
             duration_seconds: { type: "number", description: "Duration in seconds. Calculate as: (word count of voiceover / 150) * 60, rounded to nearest integer." },
             is_hook: { type: "boolean", description: "True if this scene is part of the opening hook (first ~30 seconds)" },
           },
-          required: ["scene_id", "voiceover", "scene_description", "image_prompt", "duration_seconds", "is_hook"],
+          required: ["scene_id", "voiceover", "scene_description", "duration_seconds", "is_hook"],
         },
       },
     },
@@ -82,8 +80,7 @@ function buildSystemPrompt(input: GenerateScriptInput): string {
 - The first ~30 seconds of scenes should have is_hook: true — dramatic, attention-grabbing opening
 - Each scene: one visual concept, one narration segment
 - Voiceover: actual narration text to be spoken aloud — substantive, detailed, 40-80 words per scene
-- Scene descriptions: what the viewer sees (camera movement, transitions, visual narrative)
-- Image prompts: detailed enough for AI image generation — composition, subject, mood, colors${styleContext}
+- Scene descriptions: CRITICAL — these are used directly as AI image generation prompts. Each must include: specific subject/action, composition (wide shot, close-up, bird's eye, etc.), dominant colors, lighting style, mood, and visual details. Example: "A massive swirling black hole dominates center frame, bright orange-blue accretion disk spiraling inward, distant stars stretching and distorting near the event horizon, deep space background with purple and teal nebula clouds, cinematic wide shot, dramatic lighting from the accretion disk"${styleContext}
 
 ## Duration Enforcement
 Before calling save_script, mentally verify:
@@ -197,37 +194,3 @@ Generate the complete expanded script using the save_script tool. Include ALL sc
   return scenes;
 }
 
-/**
- * Regenerates only the image prompt for a scene.
- * The voiceover and scene description are user-owned and not touched.
- * Returns a fresh image prompt based on the scene description and style context.
- */
-export async function regenerateImagePrompt(input: {
-  sceneDescription: string;
-  voiceover: string;
-  tone: string;
-  styleString?: string | null;
-}): Promise<string> {
-  const styleContext = input.styleString
-    ? ` Visual style to match: ${input.styleString}`
-    : "";
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 500,
-    system: `You are an AI image prompt specialist. Generate a detailed image generation prompt based on the scene description and voiceover context provided. The prompt should describe composition, subject, mood, colors, and visual details suitable for an AI image generator.${styleContext}\n\nReturn ONLY the image prompt text. No explanation. No preamble.`,
-    messages: [
-      {
-        role: "user",
-        content: `Scene description: ${input.sceneDescription}\n\nVoiceover context: ${input.voiceover}\n\nTone: ${input.tone}`,
-      },
-    ],
-  });
-
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Claude returned no text response");
-  }
-
-  return textBlock.text.trim();
-}

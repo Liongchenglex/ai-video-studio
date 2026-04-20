@@ -62,7 +62,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       sortOrder: i,
       voiceover: s.voiceover,
       sceneDescription: s.scene_description,
-      imagePrompt: s.image_prompt,
       durationSeconds: s.duration_seconds,
       isHook: s.is_hook,
     }));

@@ -16,7 +16,6 @@ interface SceneData {
   sortOrder: number;
   voiceover: string;
   sceneDescription: string;
-  imagePrompt: string;
   durationSeconds: number;
   isHook: boolean;
 }
@@ -33,8 +32,6 @@ export function ScriptTable({
   targetDuration,
 }: ScriptTableProps) {
   const [scenes, setScenes] = useState<SceneData[]>(initialScenes);
-  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
-
   const total = totalDuration(scenes);
   const drift = durationDrift(total, targetDuration);
 
@@ -57,33 +54,13 @@ export function ScriptTable({
     [projectId],
   );
 
-  const handleRegenerate = useCallback(
-    async (sceneId: string) => {
-      setRegeneratingId(sceneId);
-      try {
-        const res = await fetch(
-          `/api/projects/${projectId}/scenes/${sceneId}/regenerate`,
-          { method: "POST" },
-        );
-        if (res.ok) {
-          const updated = await res.json();
-          setScenes((prev) => prev.map((s) => (s.id === sceneId ? updated : s)));
-        }
-      } finally {
-        setRegeneratingId(null);
-      }
-    },
-    [projectId],
-  );
-
   const handleAddScene = useCallback(async () => {
     const res = await fetch(`/api/projects/${projectId}/scenes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         voiceover: "New scene voiceover...",
-        sceneDescription: "Describe what happens on screen...",
-        imagePrompt: "Describe the key visual for this scene...",
+        sceneDescription: "Describe what happens on screen — include composition, colors, lighting, and visual details...",
         durationSeconds: 10,
         insertAfter: scenes.length - 1,
       }),
@@ -122,9 +99,8 @@ export function ScriptTable({
               <th className="w-8 px-2 py-2 text-xs font-medium text-muted-foreground">#</th>
               <th className="px-2 py-2 text-xs font-medium text-muted-foreground">Voiceover</th>
               <th className="px-2 py-2 text-xs font-medium text-muted-foreground">Scene description</th>
-              <th className="px-2 py-2 text-xs font-medium text-muted-foreground">Image prompt</th>
               <th className="w-16 px-2 py-2 text-xs font-medium text-muted-foreground">Duration</th>
-              <th className="w-20 px-2 py-2 text-xs font-medium text-muted-foreground"></th>
+              <th className="w-12 px-2 py-2 text-xs font-medium text-muted-foreground"></th>
             </tr>
           </thead>
           <tbody>
@@ -135,8 +111,6 @@ export function ScriptTable({
                 projectId={projectId}
                 onUpdate={handleUpdate}
                 onDelete={handleDelete}
-                onRegenerate={handleRegenerate}
-                regenerating={regeneratingId === scene.id}
               />
             ))}
           </tbody>

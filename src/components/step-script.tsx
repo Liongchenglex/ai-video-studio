@@ -13,7 +13,6 @@ interface SceneData {
   sortOrder: number;
   voiceover: string;
   sceneDescription: string;
-  imagePrompt: string;
   durationSeconds: number;
   isHook: boolean;
 }

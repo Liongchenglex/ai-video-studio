@@ -1,12 +1,12 @@
 /**
  * Single editable row in the script table.
- * Supports inline editing of voiceover, scene description, and image prompt.
+ * Supports inline editing of voiceover and scene description.
  * Changes persist to the server on blur.
  */
 "use client";
 
 import { useState, useCallback } from "react";
-import { GripVertical, RefreshCw, Trash2, Loader2 } from "lucide-react";
+import { GripVertical, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -15,7 +15,6 @@ interface SceneData {
   sortOrder: number;
   voiceover: string;
   sceneDescription: string;
-  imagePrompt: string;
   durationSeconds: number;
   isHook: boolean;
 }
@@ -25,8 +24,6 @@ interface SceneRowProps {
   projectId: string;
   onUpdate: (sceneId: string, updated: SceneData) => void;
   onDelete: (sceneId: string) => void;
-  onRegenerate: (sceneId: string) => void;
-  regenerating: boolean;
 }
 
 export function SceneRow({
@@ -34,12 +31,9 @@ export function SceneRow({
   projectId,
   onUpdate,
   onDelete,
-  onRegenerate,
-  regenerating,
 }: SceneRowProps) {
   const [voiceover, setVoiceover] = useState(scene.voiceover);
   const [sceneDescription, setSceneDescription] = useState(scene.sceneDescription);
-  const [imagePrompt, setImagePrompt] = useState(scene.imagePrompt);
 
   const saveField = useCallback(
     async (field: string, value: string) => {
@@ -80,7 +74,6 @@ export function SceneRow({
           }}
           className="w-full resize-none rounded border-0 bg-transparent p-1 text-sm focus:bg-background focus:ring-1 focus:ring-ring"
           rows={3}
-          disabled={regenerating}
         />
       </td>
       <td className="px-2 py-3 align-top">
@@ -94,53 +87,21 @@ export function SceneRow({
           }}
           className="w-full resize-none rounded border-0 bg-transparent p-1 text-sm focus:bg-background focus:ring-1 focus:ring-ring"
           rows={3}
-          disabled={regenerating}
-        />
-      </td>
-      <td className="px-2 py-3 align-top">
-        <textarea
-          value={imagePrompt}
-          onChange={(e) => setImagePrompt(e.target.value)}
-          onBlur={() => {
-            if (imagePrompt.trim() !== scene.imagePrompt) {
-              saveField("imagePrompt", imagePrompt.trim());
-            }
-          }}
-          className="w-full resize-none rounded border-0 bg-transparent p-1 text-sm focus:bg-background focus:ring-1 focus:ring-ring"
-          rows={3}
-          disabled={regenerating}
         />
       </td>
       <td className="w-16 px-2 py-3 text-center align-top">
         <span className="text-sm">{scene.durationSeconds}s</span>
       </td>
-      <td className="w-20 px-2 py-3 align-top">
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => onRegenerate(scene.id)}
-            disabled={regenerating}
-            title="Regenerate scene"
-          >
-            {regenerating ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3 w-3" />
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-destructive"
-            onClick={() => onDelete(scene.id)}
-            disabled={regenerating}
-            title="Delete scene"
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
-        </div>
+      <td className="w-12 px-2 py-3 align-top">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-destructive"
+          onClick={() => onDelete(scene.id)}
+          title="Delete scene"
+        >
+          <Trash2 className="h-3 w-3" />
+        </Button>
       </td>
     </tr>
   );

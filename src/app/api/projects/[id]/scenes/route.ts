@@ -66,7 +66,6 @@ export async function POST(request: NextRequest, { params }: Params) {
   let body: {
     voiceover: string;
     sceneDescription: string;
-    imagePrompt: string;
     durationSeconds: number;
     insertAfter?: number;
   };
@@ -76,17 +75,14 @@ export async function POST(request: NextRequest, { params }: Params) {
     return badRequestResponse("Invalid request body");
   }
 
-  if (!body.voiceover?.trim() || !body.sceneDescription?.trim() || !body.imagePrompt?.trim()) {
-    return badRequestResponse("voiceover, sceneDescription, and imagePrompt are required");
+  if (!body.voiceover?.trim() || !body.sceneDescription?.trim()) {
+    return badRequestResponse("voiceover and sceneDescription are required");
   }
   if (body.voiceover.length > 5000) {
     return badRequestResponse("Voiceover must be under 5000 characters");
   }
   if (body.sceneDescription.length > 2000) {
     return badRequestResponse("Scene description must be under 2000 characters");
-  }
-  if (body.imagePrompt.length > 2000) {
-    return badRequestResponse("Image prompt must be under 2000 characters");
   }
   if (!body.durationSeconds || body.durationSeconds < 1 || body.durationSeconds > 120) {
     return badRequestResponse("durationSeconds must be between 1 and 120");
@@ -109,7 +105,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       sortOrder: insertAt,
       voiceover: body.voiceover.trim(),
       sceneDescription: body.sceneDescription.trim(),
-      imagePrompt: body.imagePrompt.trim(),
       durationSeconds: body.durationSeconds,
       isHook: false,
     })
