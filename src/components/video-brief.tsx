@@ -1,11 +1,12 @@
 /**
  * Video brief input section. Captures the creative brief, target duration,
  * and tone — the three inputs that feed script generation (F-03).
+ * Used on Step 1 of the project stepper.
  */
 "use client";
 
 import { useState, useCallback } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -22,9 +23,10 @@ interface VideoBriefProps {
   initialBrief: string;
   initialDuration: number;
   initialTone: string;
-  onGenerateScript: () => void;
-  generating: boolean;
-  hasScenes: boolean;
+  onNext: () => void;
+  onBriefChange: (brief: string) => void;
+  onDurationChange: (duration: number) => void;
+  onToneChange: (tone: string) => void;
 }
 
 const DURATIONS = [
@@ -46,58 +48,61 @@ export function VideoBrief({
   initialBrief,
   initialDuration,
   initialTone,
-  onGenerateScript,
-  generating,
-  hasScenes,
+  onNext,
+  onBriefChange,
+  onDurationChange,
+  onToneChange,
 }: VideoBriefProps) {
   const [brief, setBrief] = useState(initialBrief);
   const [duration, setDuration] = useState(String(initialDuration));
   const [tone, setTone] = useState(initialTone);
-  const [saving, setSaving] = useState(false);
 
   const saveField = useCallback(
     async (field: string, value: string | number) => {
-      setSaving(true);
-      try {
-        await fetch(`/api/projects/${projectId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ [field]: value }),
-        });
-      } finally {
-        setSaving(false);
-      }
+      await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+      });
     },
     [projectId],
   );
 
   const handleBriefBlur = useCallback(() => {
     if (brief.trim()) {
+      onBriefChange(brief.trim());
       saveField("brief", brief.trim());
     }
-  }, [brief, saveField]);
+  }, [brief, saveField, onBriefChange]);
 
   const handleDurationChange = useCallback(
     (value: string | null) => {
       if (!value) return;
       setDuration(value);
+      onDurationChange(Number(value));
       saveField("targetDuration", Number(value));
     },
-    [saveField],
+    [saveField, onDurationChange],
   );
 
   const handleToneChange = useCallback(
     (value: string | null) => {
       if (!value) return;
       setTone(value);
+      onToneChange(value);
       saveField("tone", value);
     },
-    [saveField],
+    [saveField, onToneChange],
   );
 
   return (
-    <section className="space-y-4">
-      <h2 className="text-lg font-semibold">Video concept</h2>
+    <section className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold mb-1">Video concept</h2>
+        <p className="text-sm text-muted-foreground">
+          Describe what your video is about. Be specific — include topics, structure, and emphasis.
+        </p>
+      </div>
 
       <div className="space-y-2">
         <Label htmlFor="brief">Brief</Label>
@@ -107,8 +112,7 @@ export function VideoBrief({
           onChange={(e) => setBrief(e.target.value)}
           onBlur={handleBriefBlur}
           placeholder="Describe your video concept in detail. Include the topic, key points to cover, structure preferences, and any specific instructions..."
-          rows={5}
-          disabled={generating}
+          rows={6}
           className="resize-none"
         />
       </div>
@@ -116,7 +120,7 @@ export function VideoBrief({
       <div className="flex gap-4">
         <div className="space-y-2">
           <Label>Target duration</Label>
-          <Select value={duration} onValueChange={handleDurationChange} disabled={generating}>
+          <Select value={duration} onValueChange={handleDurationChange}>
             <SelectTrigger className="w-[140px]">
               <SelectValue />
             </SelectTrigger>
@@ -132,7 +136,7 @@ export function VideoBrief({
 
         <div className="space-y-2">
           <Label>Tone</Label>
-          <Select value={tone} onValueChange={handleToneChange} disabled={generating}>
+          <Select value={tone} onValueChange={handleToneChange}>
             <SelectTrigger className="w-[160px]">
               <SelectValue />
             </SelectTrigger>
@@ -147,22 +151,12 @@ export function VideoBrief({
         </div>
       </div>
 
-      <Button
-        onClick={onGenerateScript}
-        disabled={generating || !brief.trim()}
-      >
-        {generating ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Generating script...
-          </>
-        ) : (
-          <>
-            <Sparkles className="mr-2 h-4 w-4" />
-            {hasScenes ? "Regenerate script" : "Generate script"}
-          </>
-        )}
-      </Button>
+      <div className="flex justify-end pt-4">
+        <Button onClick={onNext} disabled={!brief.trim()}>
+          Next: Style
+          <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     </section>
   );
 }
