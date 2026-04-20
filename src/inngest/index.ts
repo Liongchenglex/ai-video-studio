@@ -4,5 +4,14 @@
  */
 export { inngest } from "./client";
 
-// Functions will be added in Task 7
-export const functions: ReturnType<typeof import("./client").inngest.createFunction>[] = [];
+import { generateSceneImageFn } from "./functions/generate-scene-image";
+import { generateSceneVoiceoverFn } from "./functions/generate-scene-voiceover";
+import { generateMusicFn } from "./functions/generate-music";
+import { generateAllAssetsFn } from "./functions/generate-all-assets";
+
+export const functions = [
+  generateSceneImageFn,
+  generateSceneVoiceoverFn,
+  generateMusicFn,
+  generateAllAssetsFn,
+];
