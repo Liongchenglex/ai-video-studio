@@ -48,6 +48,17 @@ export default async function ProjectPage({
     .where(eq(scenes.projectId, id))
     .orderBy(asc(scenes.sortOrder));
 
+  // Generate download URLs for scene assets
+  const scenesWithUrls = await Promise.all(
+    projectScenes.map(async (scene) => ({
+      ...scene,
+      imageStatus: scene.imageStatus ?? "pending",
+      voiceoverStatus: scene.voiceoverStatus ?? "pending",
+      imageUrl: scene.imagePath ? await getDownloadUrl(scene.imagePath) : null,
+      voiceoverUrl: scene.voiceoverPath ? await getDownloadUrl(scene.voiceoverPath) : null,
+    })),
+  );
+
   // Generate download URLs for existing reference images
   const styleRefUrls = project.styleRefPaths
     ? await Promise.all(project.styleRefPaths.map(getDownloadUrl))
@@ -73,8 +84,12 @@ export default async function ProjectPage({
           brief: project.brief,
           targetDuration: project.targetDuration ?? 5,
           tone: project.tone ?? "educational",
+          voiceId: project.voiceId || "21m00Tcm4TlvDq8ikWAM",
+          musicPath: project.musicPath,
+          musicStatus: project.musicStatus,
+          musicMood: project.musicMood || "ambient",
         }}
-        initialScenes={projectScenes}
+        initialScenes={scenesWithUrls}
       />
     </div>
   );

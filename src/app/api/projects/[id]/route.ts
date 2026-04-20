@@ -69,7 +69,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (error === "forbidden") return forbiddenResponse();
   if (project!.deletedAt) return notFoundResponse();
 
-  let body: { name?: string; topic?: string; status?: string; brief?: string; targetDuration?: number; tone?: string };
+  let body: { name?: string; topic?: string; status?: string; brief?: string; targetDuration?: number; tone?: string; voiceId?: string };
   try {
     body = await request.json();
   } catch {
@@ -150,6 +150,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       );
     }
     updates.tone = body.tone;
+  }
+
+  if (body.voiceId !== undefined) {
+    if (typeof body.voiceId !== "string" || body.voiceId.length === 0 || body.voiceId.length > 100) {
+      return NextResponse.json(
+        { error: "Invalid voice ID" },
+        { status: 400 },
+      );
+    }
+    updates.voiceId = body.voiceId;
   }
 
   if (Object.keys(updates).length === 0) {

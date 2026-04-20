@@ -1,6 +1,6 @@
 /**
  * Project workspace orchestrator (client component).
- * Manages the 3-step stepper flow: Concept → Style → Script.
+ * Manages the 4-step stepper flow: Concept → Style → Script → Visuals.
  * All state lives here; step components are pure renderers.
  */
 "use client";
@@ -15,6 +15,7 @@ import { ProjectStepper } from "@/components/project-stepper";
 import { VideoBrief } from "@/components/video-brief";
 import { StepStyle } from "@/components/step-style";
 import { StepScript } from "@/components/step-script";
+import { StepVisuals } from "@/components/step-visuals";
 
 interface ProjectWorkspaceProps {
   project: {
@@ -29,6 +30,10 @@ interface ProjectWorkspaceProps {
     brief: string | null;
     targetDuration: number;
     tone: string;
+    voiceId: string;
+    musicPath: string | null;
+    musicStatus: string | null;
+    musicMood: string;
   };
   initialScenes: Array<{
     id: string;
@@ -37,6 +42,12 @@ interface ProjectWorkspaceProps {
     sceneDescription: string;
     durationSeconds: number;
     isHook: boolean;
+    imagePath: string | null;
+    imageStatus: string;
+    voiceoverPath: string | null;
+    voiceoverStatus: string;
+    imageUrl?: string | null;
+    voiceoverUrl?: string | null;
   }>;
 }
 
@@ -52,6 +63,7 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
 
   // ── Step navigation ──
   const [currentStep, setCurrentStep] = useState(() => {
+    if (initialScenes.length > 0 && initialScenes.some((s) => s.imagePath)) return 3;
     if (initialScenes.length > 0) return 2;
     if (project.styleString || (project.styleRefPaths && project.styleRefPaths.length > 0)) return 1;
     return 0;
@@ -72,6 +84,9 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
   const [showTemplateSave, setShowTemplateSave] = useState(false);
   const [templateSaved, setTemplateSaved] = useState(false);
   const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
+
+  // ── Voice state ──
+  const [voiceId, setVoiceId] = useState(project.voiceId);
 
   // ── Script state ──
   const [scenes, setScenes] = useState(initialScenes);
@@ -96,6 +111,13 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
       label: "Script",
       description: "Scene breakdown",
       completed: scenes.length > 0,
+    },
+    {
+      label: "Visuals",
+      description: "Images + Voice",
+      completed: scenes.length > 0 && scenes.every(
+        (s) => s.imageStatus === "done" && s.voiceoverStatus === "done",
+      ),
     },
   ];
 
@@ -272,6 +294,23 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
           onToneChange={setTone}
           onGenerateScript={handleGenerateScript}
           onBack={() => setCurrentStep(1)}
+          onNext={() => setCurrentStep(3)}
+        />
+      )}
+
+      {currentStep === 3 && (
+        <StepVisuals
+          projectId={project.id}
+          brief={brief}
+          duration={targetDuration}
+          tone={tone}
+          scenes={scenes}
+          voiceId={voiceId}
+          onVoiceChange={setVoiceId}
+          onBriefChange={setBrief}
+          onDurationChange={setTargetDuration}
+          onToneChange={setTone}
+          onBack={() => setCurrentStep(2)}
         />
       )}
     </main>

@@ -3,7 +3,7 @@
  */
 "use client";
 
-import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BriefSummary } from "@/components/brief-summary";
 import { ScriptTable } from "@/components/script-table";
@@ -30,6 +30,7 @@ interface StepScriptProps {
   onToneChange: (tone: string) => void;
   onGenerateScript: () => void;
   onBack: () => void;
+  onNext?: () => void;
 }
 
 export function StepScript({
@@ -45,6 +46,7 @@ export function StepScript({
   onToneChange,
   onGenerateScript,
   onBack,
+  onNext,
 }: StepScriptProps) {
   return (
     <section className="space-y-6">
@@ -91,6 +93,12 @@ export function StepScript({
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
+        {scenes.length > 0 && onNext && (
+          <Button onClick={onNext}>
+            Next: Visuals
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        )}
       </div>
     </section>
   );
