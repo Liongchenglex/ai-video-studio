@@ -76,6 +76,13 @@ export const toneEnum = pgEnum("tone", [
   "satirical",
 ]);
 
+export const generationStatusEnum = pgEnum("generation_status", [
+  "pending",
+  "generating",
+  "done",
+  "failed",
+]);
+
 export const projectStatusEnum = pgEnum("project_status", [
   "draft",
   "generating",
@@ -109,6 +116,12 @@ export const projects = pgTable(
     brief: text("brief"),
     targetDuration: integer("target_duration").default(5),
     tone: toneEnum("tone").default("educational"),
+
+    // ── Music (F-06) ──
+    musicPath: text("music_path"),
+    musicStatus: generationStatusEnum("music_status").default("pending"),
+    musicMood: text("music_mood").default("ambient"),
+    voiceId: text("voice_id").default("21m00Tcm4TlvDq8ikWAM"),
   },
   (table) => [index("projects_user_id_deleted_at_idx").on(table.userId, table.deletedAt)],
 );
@@ -155,6 +168,18 @@ export const scenes = pgTable(
     sceneDescription: text("scene_description").notNull(),
     durationSeconds: integer("duration_seconds").notNull(),
     isHook: boolean("is_hook").default(false).notNull(),
+
+    // ── Generated assets (F-04 + F-05) ──
+    imagePath: text("image_path"),
+    imageStatus: generationStatusEnum("image_status").default("pending"),
+    voiceoverPath: text("voiceover_path"),
+    voiceoverStatus: generationStatusEnum("voiceover_status").default("pending"),
+    voiceoverTimestamps: jsonb("voiceover_timestamps").$type<{
+      characters: string[];
+      character_start_times_seconds: number[];
+      character_end_times_seconds: number[];
+    }>(),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
