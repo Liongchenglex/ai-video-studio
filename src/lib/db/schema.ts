@@ -166,6 +166,7 @@ export const scenes = pgTable(
     sortOrder: integer("sort_order").notNull(),
     voiceover: text("voiceover").notNull(),
     sceneDescription: text("scene_description").notNull(),
+    stillImagePrompt: text("still_image_prompt"),
     durationSeconds: integer("duration_seconds").notNull(),
     isHook: boolean("is_hook").default(false).notNull(),
 

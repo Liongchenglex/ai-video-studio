@@ -12,7 +12,7 @@ fal.config({ credentials: process.env.FAL_KEY! });
 interface GenerateImageInput {
   projectId: string;
   sceneId: string;
-  sceneDescription: string;
+  stillImagePrompt: string;
   styleString?: string | null;
 }
 
@@ -29,10 +29,10 @@ interface GenerateImageResult {
 export async function generateSceneImage(
   input: GenerateImageInput,
 ): Promise<GenerateImageResult> {
-  // Scene description first (what to draw), style second (how it should look)
+  // Still image prompt first (what to draw), style second (how it should look)
   const prompt = input.styleString
-    ? `${input.sceneDescription}. Style: ${input.styleString}`
-    : input.sceneDescription;
+    ? `${input.stillImagePrompt}. Style: ${input.styleString}`
+    : input.stillImagePrompt;
 
   const result = await fal.subscribe("fal-ai/flux-pro/kontext/text-to-image", {
     input: {

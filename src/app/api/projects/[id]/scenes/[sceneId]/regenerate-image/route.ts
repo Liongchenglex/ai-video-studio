@@ -58,7 +58,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     data: {
       sceneId,
       projectId: id,
-      sceneDescription: scene.sceneDescription,
+      stillImagePrompt: scene.stillImagePrompt || scene.sceneDescription,
       styleString: project.styleString,
     },
   });

@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     const result = await generateSceneImage({
       projectId,
       sceneId,
-      sceneDescription: scene.sceneDescription,
+      stillImagePrompt: scene.stillImagePrompt || scene.sceneDescription,
       styleString: project.styleString,
     });
 

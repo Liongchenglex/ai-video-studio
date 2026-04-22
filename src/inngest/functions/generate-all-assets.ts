@@ -41,7 +41,7 @@ export const generateAllAssetsFn = inngest.createFunction(
       data: {
         sceneId: scene.id,
         projectId,
-        sceneDescription: scene.sceneDescription,
+        stillImagePrompt: scene.stillImagePrompt || scene.sceneDescription,
         styleString: data.project.styleString,
       },
     }));
