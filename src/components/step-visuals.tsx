@@ -92,48 +92,101 @@ export function StepVisuals({
     return () => clearInterval(interval);
   }, [pollingActive, hasAnyPending, projectId]);
 
-  const handleGenerateAssets = useCallback(async () => {
-    setGenerating(true);
-    setPollingActive(true);
-    const res = await fetch(`/api/projects/${projectId}/generate-assets`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      setGenerating(false);
-      setPollingActive(false);
+  // ── Direct test handlers (no Inngest) ──
+  const [testStatus, setTestStatus] = useState<string | null>(null);
+
+  const handleTestImage = useCallback(
+    async (sceneId: string) => {
+      setTestStatus(`Generating image for scene...`);
+      setScenes((prev) =>
+        prev.map((s) => (s.id === sceneId ? { ...s, imageStatus: "generating" } : s)),
+      );
+      try {
+        const res = await fetch("/api/test/image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, sceneId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setTestStatus(`Image done: ${data.r2Key}`);
+          // Refresh scenes to get the new URL
+          const scenesRes = await fetch(`/api/projects/${projectId}/scenes`);
+          if (scenesRes.ok) setScenes(await scenesRes.json());
+        } else {
+          setTestStatus(`Image failed: ${data.error}`);
+          setScenes((prev) =>
+            prev.map((s) => (s.id === sceneId ? { ...s, imageStatus: "failed" } : s)),
+          );
+        }
+      } catch (err) {
+        setTestStatus(`Image error: ${err instanceof Error ? err.message : "unknown"}`);
+      }
+    },
+    [projectId],
+  );
+
+  const handleTestVoiceover = useCallback(
+    async (sceneId: string) => {
+      setTestStatus(`Generating voiceover for scene...`);
+      setScenes((prev) =>
+        prev.map((s) => (s.id === sceneId ? { ...s, voiceoverStatus: "generating" } : s)),
+      );
+      try {
+        const res = await fetch("/api/test/voiceover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, sceneId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setTestStatus(`Voiceover done: ${data.durationSeconds}s`);
+          const scenesRes = await fetch(`/api/projects/${projectId}/scenes`);
+          if (scenesRes.ok) setScenes(await scenesRes.json());
+        } else {
+          setTestStatus(`Voiceover failed: ${data.error}`);
+          setScenes((prev) =>
+            prev.map((s) => (s.id === sceneId ? { ...s, voiceoverStatus: "failed" } : s)),
+          );
+        }
+      } catch (err) {
+        setTestStatus(`Voiceover error: ${err instanceof Error ? err.message : "unknown"}`);
+      }
+    },
+    [projectId],
+  );
+
+  const handleTestMusic = useCallback(async () => {
+    setTestStatus("Generating music...");
+    try {
+      const res = await fetch("/api/test/music", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTestStatus(`Music done: ${data.r2Key}`);
+      } else {
+        setTestStatus(`Music failed: ${data.error}`);
+      }
+    } catch (err) {
+      setTestStatus(`Music error: ${err instanceof Error ? err.message : "unknown"}`);
     }
   }, [projectId]);
 
   const handleRegenerateImage = useCallback(
     async (sceneId: string) => {
-      setScenes((prev) =>
-        prev.map((s) =>
-          s.id === sceneId ? { ...s, imageStatus: "pending" } : s,
-        ),
-      );
-      setPollingActive(true);
-      await fetch(
-        `/api/projects/${projectId}/scenes/${sceneId}/regenerate-image`,
-        { method: "POST" },
-      );
+      handleTestImage(sceneId);
     },
-    [projectId],
+    [handleTestImage],
   );
 
   const handleRegenerateVoice = useCallback(
     async (sceneId: string) => {
-      setScenes((prev) =>
-        prev.map((s) =>
-          s.id === sceneId ? { ...s, voiceoverStatus: "pending" } : s,
-        ),
-      );
-      setPollingActive(true);
-      await fetch(
-        `/api/projects/${projectId}/scenes/${sceneId}/regenerate-voice`,
-        { method: "POST" },
-      );
+      handleTestVoiceover(sceneId);
     },
-    [projectId],
+    [handleTestVoiceover],
   );
 
   const handleVoiceChange = useCallback(
@@ -164,28 +217,22 @@ export function StepVisuals({
         onToneChange={onToneChange}
       />
 
-      <div className="flex items-center gap-3">
-        <Button
-          onClick={handleGenerateAssets}
-          disabled={generating || hasAnyPending}
-        >
-          {generating || hasAnyPending ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Generating assets...
-            </>
-          ) : (
-            <>
-              <Sparkles className="mr-2 h-4 w-4" />
-              {noneStarted ? "Generate visuals + voice" : "Regenerate all"}
-            </>
-          )}
-        </Button>
-        {hasAnyPending && (
-          <span className="text-sm text-muted-foreground">
-            {scenes.filter((s) => s.imageStatus === "done").length}/{scenes.length} images,{" "}
-            {scenes.filter((s) => s.voiceoverStatus === "done").length}/{scenes.length} voiceovers
-          </span>
+      {/* Test Panel — direct API calls, no Inngest */}
+      <div className="rounded-lg border border-dashed p-4 space-y-3">
+        <h3 className="text-sm font-medium">Test Panel (direct calls)</h3>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={() => handleTestImage(scenes[0]?.id)} disabled={!scenes[0]}>
+            Test Image (Scene 1)
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => handleTestVoiceover(scenes[0]?.id)} disabled={!scenes[0]}>
+            Test Voiceover (Scene 1)
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleTestMusic}>
+            Test Music
+          </Button>
+        </div>
+        {testStatus && (
+          <p className="text-xs text-muted-foreground font-mono">{testStatus}</p>
         )}
       </div>
 
