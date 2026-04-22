@@ -66,9 +66,9 @@ export function StepVisuals({
       s.voiceoverStatus === "generating",
   );
 
-  // Poll for scene status updates while generation is in progress
+  // Poll for scene status updates only when user triggered generation
   useEffect(() => {
-    if (!pollingActive && !hasAnyPending) return;
+    if (!pollingActive) return;
 
     const interval = setInterval(async () => {
       const res = await fetch(`/api/projects/${projectId}/scenes`);

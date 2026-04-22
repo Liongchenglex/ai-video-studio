@@ -28,7 +28,9 @@ export async function POST(request: NextRequest) {
   if (!scene) return badRequestResponse("Scene not found");
 
   try {
-    console.log(`[test/image] Generating image for scene ${scene.sortOrder}...`);
+    const promptUsed = scene.stillImagePrompt || scene.sceneDescription;
+    console.log(`[test/image] Scene ${scene.sortOrder} | Using: ${scene.stillImagePrompt ? 'stillImagePrompt' : 'sceneDescription (fallback)'}`);
+    console.log(`[test/image] Prompt: ${promptUsed.substring(0, 120)}...`);
 
     const result = await generateSceneImage({
       projectId,
