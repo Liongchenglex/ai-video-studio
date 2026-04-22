@@ -60,10 +60,18 @@ export async function POST(request: NextRequest, { params }: Params) {
     .set({ musicStatus: "pending" })
     .where(eq(projects.id, id));
 
-  await inngest.send({
-    name: "project/assets.generate",
-    data: { projectId: id },
-  });
+  try {
+    await inngest.send({
+      name: "project/assets.generate",
+      data: { projectId: id },
+    });
+  } catch (error) {
+    console.error("Failed to send Inngest event:", error instanceof Error ? error.message : error);
+    return NextResponse.json(
+      { error: "Failed to start asset generation. Check Inngest Dev Server is running." },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ message: "Asset generation started" });
 }
