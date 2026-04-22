@@ -1,12 +1,13 @@
 /**
- * Project workspace page (server component). Fetches session and project
- * data server-side, renders the project workspace with style profile.
+ * Project workspace page (server component, PRD v3.0 shape).
+ * Loads the project row (including script + VO), shots attached directly
+ * to the project, and generates presigned URLs for any existing assets.
  */
 import { headers } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, scenes } from "@/lib/db/schema";
+import { projects, shots } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { Navbar } from "@/components/navbar";
 import { ProjectWorkspace } from "@/components/project-workspace";
@@ -42,30 +43,33 @@ export default async function ProjectPage({
     notFound();
   }
 
-  const projectScenes = await db
+  // Shots attach directly to the project now (no scenes).
+  const projectShots = await db
     .select()
-    .from(scenes)
-    .where(eq(scenes.projectId, id))
-    .orderBy(asc(scenes.sortOrder));
+    .from(shots)
+    .where(eq(shots.projectId, id))
+    .orderBy(asc(shots.sortOrder));
 
-  // Generate download URLs for scene assets
-  const scenesWithUrls = await Promise.all(
-    projectScenes.map(async (scene) => ({
-      ...scene,
-      imageStatus: scene.imageStatus ?? "pending",
-      voiceoverStatus: scene.voiceoverStatus ?? "pending",
-      imageUrl: scene.imagePath ? await getDownloadUrl(scene.imagePath) : null,
-      voiceoverUrl: scene.voiceoverPath ? await getDownloadUrl(scene.voiceoverPath) : null,
+  const shotsWithUrls = await Promise.all(
+    projectShots.map(async (shot) => ({
+      ...shot,
+      imageStatus: shot.imageStatus ?? "pending",
+      clipStatus: shot.clipStatus ?? "pending",
+      imageUrl: shot.imagePath ? await getDownloadUrl(shot.imagePath) : null,
+      clipUrl: shot.clipPath ? await getDownloadUrl(shot.clipPath) : null,
     })),
   );
 
-  // Generate download URLs for existing reference images
   const styleRefUrls = project.styleRefPaths
     ? await Promise.all(project.styleRefPaths.map(getDownloadUrl))
     : [];
 
   const stylePreviewUrl = project.stylePreviewPath
     ? await getDownloadUrl(project.stylePreviewPath)
+    : null;
+
+  const voiceoverUrl = project.voiceoverPath
+    ? await getDownloadUrl(project.voiceoverPath)
     : null;
 
   return (
@@ -84,12 +88,17 @@ export default async function ProjectPage({
           brief: project.brief,
           targetDuration: project.targetDuration ?? 5,
           tone: project.tone ?? "educational",
+          script: project.script,
           voiceId: project.voiceId || "21m00Tcm4TlvDq8ikWAM",
+          voiceoverPath: project.voiceoverPath,
+          voiceoverStatus: project.voiceoverStatus ?? "pending",
+          voiceoverUrl,
+          durationSeconds: project.durationSeconds,
           musicPath: project.musicPath,
           musicStatus: project.musicStatus,
           musicMood: project.musicMood || "ambient",
         }}
-        initialScenes={scenesWithUrls}
+        initialShots={shotsWithUrls}
       />
     </div>
   );

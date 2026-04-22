@@ -5,8 +5,8 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, scenes } from "@/lib/db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { projects } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import { getSession, unauthorizedResponse, badRequestResponse } from "@/lib/api-utils";
 import { generateMusic } from "@/lib/music-generation";
 
@@ -22,11 +22,10 @@ export async function POST(request: NextRequest) {
     .limit(1);
   if (!project) return badRequestResponse("Project not found");
 
-  const projectScenes = await db.select().from(scenes)
-    .where(eq(scenes.projectId, projectId))
-    .orderBy(asc(scenes.sortOrder));
-
-  const totalDuration = projectScenes.reduce((sum, s) => sum + s.durationSeconds, 0);
+  const totalDuration = project.durationSeconds;
+  if (!totalDuration) {
+    return badRequestResponse("Generate voiceover first — music duration is derived from VO length");
+  }
 
   try {
     console.log(`[test/music] Generating music for project (${totalDuration}s, mood: ${project.musicMood})...`);

@@ -117,6 +117,21 @@ export const projects = pgTable(
     targetDuration: integer("target_duration").default(5),
     tone: toneEnum("tone").default("educational"),
 
+    // ── Script (F-03) ──
+    // Plain text with paragraph breaks (\n\n). No scene/shot structure —
+    // shots are user-defined on the editor timeline instead.
+    script: text("script"),
+
+    // ── Voiceover (F-05) — one continuous track per project ──
+    voiceoverPath: text("voiceover_path"),
+    voiceoverStatus: generationStatusEnum("voiceover_status").default("pending"),
+    voiceoverTimestamps: jsonb("voiceover_timestamps").$type<{
+      characters: string[];
+      character_start_times_seconds: number[];
+      character_end_times_seconds: number[];
+    }>(),
+    durationSeconds: integer("duration_seconds"),
+
     // ── Music (F-06) ──
     musicPath: text("music_path"),
     musicStatus: generationStatusEnum("music_status").default("pending"),
@@ -154,32 +169,39 @@ export const styleTemplates = pgTable(
 export type StyleTemplate = typeof styleTemplates.$inferSelect;
 export type NewStyleTemplate = typeof styleTemplates.$inferInsert;
 
-// ─── Scenes (F-03) ──────────────────────────────────────────────────
+// ─── Shots (F-04 + F-07 + F-08) ─────────────────────────────────────
+// A shot is a user-defined time range on the project timeline with an
+// image + animated clip over that range of the continuous voiceover.
+// Users create and position shots in the Timeline Editor (F-08); there
+// is no scene-level grouping.
 
-export const scenes = pgTable(
-  "scenes",
+export const shots = pgTable(
+  "shots",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     sortOrder: integer("sort_order").notNull(),
-    voiceover: text("voiceover").notNull(),
-    sceneDescription: text("scene_description").notNull(),
-    stillImagePrompt: text("still_image_prompt"),
-    durationSeconds: integer("duration_seconds").notNull(),
-    isHook: boolean("is_hook").default(false).notNull(),
 
-    // ── Generated assets (F-04 + F-05) ──
+    // ── Position on the global project timeline ──
+    startSeconds: integer("start_seconds").notNull(),
+    endSeconds: integer("end_seconds").notNull(),
+
+    // Cached VO fragment covering this time range (display/reference only)
+    text: text("text"),
+
+    imagePrompt: text("image_prompt").notNull(),
+    motionPrompt: text("motion_prompt").notNull(),
+
+    // ── Image (F-04) ──
     imagePath: text("image_path"),
     imageStatus: generationStatusEnum("image_status").default("pending"),
-    voiceoverPath: text("voiceover_path"),
-    voiceoverStatus: generationStatusEnum("voiceover_status").default("pending"),
-    voiceoverTimestamps: jsonb("voiceover_timestamps").$type<{
-      characters: string[];
-      character_start_times_seconds: number[];
-      character_end_times_seconds: number[];
-    }>(),
+
+    // ── Clip (F-07) ──
+    clipPath: text("clip_path"),
+    clipStatus: generationStatusEnum("clip_status").default("pending"),
+    clipDurationSeconds: integer("clip_duration_seconds"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
@@ -188,9 +210,9 @@ export const scenes = pgTable(
       .notNull(),
   },
   (table) => [
-    index("scenes_project_id_sort_order_idx").on(table.projectId, table.sortOrder),
+    index("shots_project_id_sort_order_idx").on(table.projectId, table.sortOrder),
   ],
 );
 
-export type Scene = typeof scenes.$inferSelect;
-export type NewScene = typeof scenes.$inferInsert;
+export type Shot = typeof shots.$inferSelect;
+export type NewShot = typeof shots.$inferInsert;

@@ -1,11 +1,12 @@
 /**
  * POST /api/projects/[id]/script/generate
- * Generates a full video script from the project's brief using Claude.
- * Replaces any existing scenes for this project.
+ * Generates a plain-text script (F-03, PRD v3.0) and persists it to
+ * project.script. Invalidates any existing voiceover (user must explicitly
+ * regenerate VO after a script change).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, scenes } from "@/lib/db/schema";
+import { projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   getSession,
@@ -21,6 +22,8 @@ import { generateScript } from "@/lib/script-generation";
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Params) {
+  console.log("[script/generate] POST received");
+
   const rateLimitError = applyRateLimit(request, "generation");
   if (rateLimitError) return rateLimitError;
 
@@ -46,30 +49,27 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   try {
-    const generatedScenes = await generateScript({
+    const script = await generateScript({
       brief: project.brief,
       targetDurationMinutes: project.targetDuration ?? 5,
       tone: project.tone ?? "educational",
       styleString: project.styleString,
     });
 
-    // Delete existing scenes for this project
-    await db.delete(scenes).where(eq(scenes.projectId, id));
+    // Invalidate any existing VO — it was generated from the old script.
+    await db
+      .update(projects)
+      .set({
+        script,
+        voiceoverPath: null,
+        voiceoverStatus: "pending",
+        voiceoverTimestamps: null,
+        durationSeconds: null,
+      })
+      .where(eq(projects.id, id));
 
-    // Insert new scenes
-    const sceneRows = generatedScenes.map((s, i) => ({
-      projectId: id,
-      sortOrder: i,
-      voiceover: s.voiceover,
-      sceneDescription: s.scene_description,
-      stillImagePrompt: s.still_image_prompt,
-      durationSeconds: s.duration_seconds,
-      isHook: s.is_hook,
-    }));
-
-    const inserted = await db.insert(scenes).values(sceneRows).returning();
-
-    return NextResponse.json({ scenes: inserted });
+    console.log(`[script/generate] saved ${script.length} chars to project ${id}`);
+    return NextResponse.json({ script });
   } catch (error) {
     console.error("Script generation failed:", error instanceof Error ? error.message : error);
     return NextResponse.json(

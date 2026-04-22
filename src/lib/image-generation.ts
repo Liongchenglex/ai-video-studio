@@ -10,9 +10,11 @@ import { r2Client, getDownloadUrl } from "@/lib/r2";
 fal.config({ credentials: process.env.FAL_KEY! });
 
 interface GenerateImageInput {
-  projectId: string;
-  sceneId: string;
+  /** Full R2 key the caller wants the image stored at. */
+  r2Key: string;
+  /** Concrete visual description (no motion words). */
   stillImagePrompt: string;
+  /** Optional style conditioning appended to the prompt. */
   styleString?: string | null;
 }
 
@@ -22,14 +24,12 @@ interface GenerateImageResult {
 }
 
 /**
- * Generates a scene image and stores it in R2.
- * Uses text-to-image with the scene description as the primary prompt.
- * Style string is appended as a style modifier, not prepended.
+ * Generates an image via FLUX Kontext and stores it at the caller-provided R2 key.
+ * Still image prompt is the subject; style string is appended as a style modifier.
  */
-export async function generateSceneImage(
+export async function generateImage(
   input: GenerateImageInput,
 ): Promise<GenerateImageResult> {
-  // Still image prompt first (what to draw), style second (how it should look)
   const prompt = input.styleString
     ? `${input.stillImagePrompt}. Style: ${input.styleString}`
     : input.stillImagePrompt;
@@ -47,7 +47,6 @@ export async function generateSceneImage(
 
   const imageUrl = output.images[0].url;
 
-  // Download from fal.ai and upload to R2
   const imageRes = await fetch(imageUrl);
   if (!imageRes.ok) {
     throw new Error("Failed to download generated image");
@@ -55,16 +54,15 @@ export async function generateSceneImage(
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer());
   const contentType = imageRes.headers.get("content-type") || "image/png";
 
-  const r2Key = `projects/${input.projectId}/scenes/${input.sceneId}/image.png`;
   await r2Client.send(
     new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME!,
-      Key: r2Key,
+      Key: input.r2Key,
       Body: imageBuffer,
       ContentType: contentType,
     }),
   );
 
-  const downloadUrl = await getDownloadUrl(r2Key);
-  return { r2Key, downloadUrl };
+  const downloadUrl = await getDownloadUrl(input.r2Key);
+  return { r2Key: input.r2Key, downloadUrl };
 }

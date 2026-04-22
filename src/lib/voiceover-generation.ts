@@ -1,7 +1,7 @@
 /**
- * Voiceover generation service using ElevenLabs TTS.
- * Generates narration audio with word-level timestamps for sync.
- * Stores MP3 in R2 and returns timing data for captions/assembly.
+ * Voiceover generation (F-05, PRD v3.0).
+ * One continuous voiceover per project. Char-level timestamps drive
+ * the editor's waveform scrubbing and shot time-range selection.
  */
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
@@ -13,12 +13,11 @@ const elevenlabs = new ElevenLabsClient({
 
 interface GenerateVoiceoverInput {
   projectId: string;
-  sceneId: string;
   text: string;
   voiceId: string;
 }
 
-interface VoiceoverTimestamps {
+export interface VoiceoverTimestamps {
   characters: string[];
   character_start_times_seconds: number[];
   character_end_times_seconds: number[];
@@ -31,9 +30,11 @@ interface GenerateVoiceoverResult {
 }
 
 /**
- * Generates voiceover audio with timestamps and stores in R2.
+ * Generates a single continuous voiceover for the whole project script.
+ * Stored at `projects/{projectId}/voiceover.mp3`. Caller persists r2Key +
+ * timestamps + durationSeconds to the projects row.
  */
-export async function generateSceneVoiceover(
+export async function generateProjectVoiceover(
   input: GenerateVoiceoverInput,
 ): Promise<GenerateVoiceoverResult> {
   const result = await elevenlabs.textToSpeech.convertWithTimestamps(
@@ -51,7 +52,7 @@ export async function generateSceneVoiceover(
 
   const audioBuffer = Buffer.from(result.audioBase64, "base64");
 
-  const r2Key = `projects/${input.projectId}/scenes/${input.sceneId}/voiceover.mp3`;
+  const r2Key = `projects/${input.projectId}/voiceover.mp3`;
   await r2Client.send(
     new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME!,

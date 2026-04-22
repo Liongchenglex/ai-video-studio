@@ -69,7 +69,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (error === "forbidden") return forbiddenResponse();
   if (project!.deletedAt) return notFoundResponse();
 
-  let body: { name?: string; topic?: string; status?: string; brief?: string; targetDuration?: number; tone?: string; voiceId?: string };
+  let body: { name?: string; topic?: string; status?: string; brief?: string; targetDuration?: number; tone?: string; voiceId?: string; script?: string };
   try {
     body = await request.json();
   } catch {
@@ -160,6 +160,21 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       );
     }
     updates.voiceId = body.voiceId;
+  }
+
+  if (body.script !== undefined) {
+    if (typeof body.script !== "string") {
+      return NextResponse.json({ error: "Script must be a string" }, { status: 400 });
+    }
+    if (body.script.length > 50000) {
+      return NextResponse.json({ error: "Script too long (50000 char max)" }, { status: 400 });
+    }
+    updates.script = body.script;
+    // Any script edit invalidates the existing VO.
+    updates.voiceoverPath = null;
+    updates.voiceoverStatus = "pending";
+    updates.voiceoverTimestamps = null;
+    updates.durationSeconds = null;
   }
 
   if (Object.keys(updates).length === 0) {
