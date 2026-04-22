@@ -10,8 +10,8 @@ import { projects, scenes } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getSession, unauthorizedResponse, badRequestResponse } from "@/lib/api-utils";
 import { fal } from "@fal-ai/client";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { r2Client, getDownloadUrl } from "@/lib/r2";
+import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { r2Client } from "@/lib/r2";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
@@ -37,34 +37,39 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Get the presigned URL for the scene's generated image
-    const imageUrl = await getDownloadUrl(scene.imagePath);
+    // Download image from R2 and upload to fal.ai storage
+    // (fal.ai can't always fetch from R2 presigned URLs)
+    console.log(`[test/animation] Scene ${scene.sortOrder} | Uploading image to fal.ai...`);
 
-    // Use sceneDescription as the motion prompt — this is where camera/transition words are useful
-    const motionPrompt = project.styleString
-      ? `${scene.sceneDescription}. Style: ${project.styleString}`
-      : scene.sceneDescription;
-
-    console.log(`[test/animation] Scene ${scene.sortOrder} | Duration: ${scene.durationSeconds}s`);
-    console.log(`[test/animation] Motion prompt: ${motionPrompt.substring(0, 120)}...`);
-    console.log(`[test/animation] Image URL: ${imageUrl.substring(0, 80)}...`);
-
-    // LTX-2.3 only supports 6, 8, or 10 second clips
-    // Pick the closest supported duration
-    const supportedDurations = [6, 8, 10];
-    const clipDuration = supportedDurations.reduce((prev, curr) =>
-      Math.abs(curr - scene.durationSeconds) < Math.abs(prev - scene.durationSeconds) ? curr : prev
+    const r2Object = await r2Client.send(
+      new GetObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME!,
+        Key: scene.imagePath,
+      }),
     );
+    const imageBytes = await r2Object.Body!.transformToByteArray();
+    const imageBuffer = Buffer.from(imageBytes);
+    const imageBlob = new Blob([imageBuffer], { type: "image/png" });
+    const imageFile = new File([imageBlob], "scene-image.png", { type: "image/png" });
+
+    const falUpload = await fal.storage.upload(imageFile);
+    console.log(`[test/animation] Uploaded to fal: ${falUpload}`);
+
+    // Use sceneDescription as the motion prompt
+    const motionPrompt = scene.sceneDescription;
+
+    console.log(`[test/animation] Motion prompt: ${motionPrompt.substring(0, 120)}...`);
 
     const result = await fal.subscribe("fal-ai/ltx-2.3/image-to-video", {
       input: {
-        image_url: imageUrl,
+        image_url: falUpload,
         prompt: motionPrompt,
-        duration: String(clipDuration),
-        resolution: "720p",
-        aspect_ratio: "auto",
-        fps: "25",
-        generate_audio: false,
+      },
+      logs: true,
+      onQueueUpdate: (update) => {
+        if (update.status === "IN_PROGRESS" && "logs" in update) {
+          update.logs?.map((log) => log.message).forEach((msg) => console.log(`[test/animation] ${msg}`));
+        }
       },
     });
 
@@ -73,7 +78,7 @@ export async function POST(request: NextRequest) {
       throw new Error("LTX-2.3 returned no video");
     }
 
-    console.log(`[test/animation] Video generated, downloading...`);
+    console.log(`[test/animation] Video generated, downloading to R2...`);
 
     // Download from fal.ai and upload to R2
     const videoRes = await fetch(output.video.url);
@@ -92,14 +97,11 @@ export async function POST(request: NextRequest) {
       }),
     );
 
-    const downloadUrl = await getDownloadUrl(r2Key);
-
     console.log(`[test/animation] Done: ${r2Key}`);
     return NextResponse.json({
       success: true,
       r2Key,
-      downloadUrl,
-      clipDuration,
+      videoUrl: output.video.url,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
