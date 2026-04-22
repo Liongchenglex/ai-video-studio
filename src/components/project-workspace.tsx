@@ -62,6 +62,14 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
   const router = useRouter();
 
   // ── Step navigation ──
+  const handleStepChange = useCallback((step: number) => {
+    setCurrentStep(step);
+    // Refresh server data when entering Visuals step to pick up generated assets
+    if (step === 3) {
+      router.refresh();
+    }
+  }, [router]);
+
   const [currentStep, setCurrentStep] = useState(() => {
     if (initialScenes.length > 0 && initialScenes.some((s) => s.imagePath)) return 3;
     if (initialScenes.length > 0) return 2;
@@ -231,7 +239,7 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
       <ProjectStepper
         currentStep={currentStep}
         steps={steps}
-        onStepClick={setCurrentStep}
+        onStepClick={handleStepChange}
       />
 
       <Separator className="mb-8" />
@@ -294,7 +302,7 @@ export function ProjectWorkspace({ project, initialScenes }: ProjectWorkspacePro
           onToneChange={setTone}
           onGenerateScript={handleGenerateScript}
           onBack={() => setCurrentStep(1)}
-          onNext={() => setCurrentStep(3)}
+          onNext={() => handleStepChange(3)}
         />
       )}
 
