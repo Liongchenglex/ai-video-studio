@@ -124,7 +124,7 @@ async function runGeneration(
   const maxIterations = 10;
   for (let i = 0; i < maxIterations; i++) {
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5-20250929",
       max_tokens: 16000,
       system: systemPrompt,
       tools,
