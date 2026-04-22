@@ -15,6 +15,7 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
+import { getDownloadUrl } from "@/lib/r2";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -39,7 +40,16 @@ export async function GET(_request: NextRequest, { params }: Params) {
     .where(eq(scenes.projectId, id))
     .orderBy(asc(scenes.sortOrder));
 
-  return NextResponse.json(projectScenes);
+  // Generate presigned download URLs for assets so the client can display them
+  const scenesWithUrls = await Promise.all(
+    projectScenes.map(async (scene) => ({
+      ...scene,
+      imageUrl: scene.imagePath ? await getDownloadUrl(scene.imagePath) : null,
+      voiceoverUrl: scene.voiceoverPath ? await getDownloadUrl(scene.voiceoverPath) : null,
+    })),
+  );
+
+  return NextResponse.json(scenesWithUrls);
 }
 
 export async function POST(request: NextRequest, { params }: Params) {
