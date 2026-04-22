@@ -16,7 +16,7 @@ export const generateSceneImageFn = inngest.createFunction(
   },
   { event: "scene/image.generate" },
   async ({ event, step }) => {
-    const { sceneId, projectId, sceneDescription, styleString, styleRefPaths } = event.data;
+    const { sceneId, projectId, sceneDescription, styleString } = event.data;
 
     await step.run("set-status-generating", async () => {
       await db
@@ -31,7 +31,6 @@ export const generateSceneImageFn = inngest.createFunction(
         sceneId,
         sceneDescription,
         styleString,
-        styleRefPaths,
       });
     });
 

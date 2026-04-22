@@ -43,7 +43,6 @@ export const generateAllAssetsFn = inngest.createFunction(
         projectId,
         sceneDescription: scene.sceneDescription,
         styleString: data.project.styleString,
-        styleRefPaths: data.project.styleRefPaths,
       },
     }));
 

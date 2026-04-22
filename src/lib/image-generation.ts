@@ -1,6 +1,6 @@
 /**
- * Image generation service using FLUX.1 Kontext via fal.ai.
- * Generates a scene image from a scene description and optional style references.
+ * Image generation service using FLUX Kontext via fal.ai.
+ * Generates a scene image from a scene description with optional style conditioning.
  * Downloads the result and stores it in R2.
  */
 import { fal } from "@fal-ai/client";
@@ -14,7 +14,6 @@ interface GenerateImageInput {
   sceneId: string;
   sceneDescription: string;
   styleString?: string | null;
-  styleRefPaths?: string[] | null;
 }
 
 interface GenerateImageResult {
@@ -24,55 +23,29 @@ interface GenerateImageResult {
 
 /**
  * Generates a scene image and stores it in R2.
- * Uses FLUX.1 Kontext with style references when available.
- * The sceneDescription is used directly as the image prompt.
+ * Uses text-to-image with the scene description as the primary prompt.
+ * Style string is appended as a style modifier, not prepended.
  */
 export async function generateSceneImage(
   input: GenerateImageInput,
 ): Promise<GenerateImageResult> {
+  // Scene description first (what to draw), style second (how it should look)
   const prompt = input.styleString
-    ? `${input.styleString}. ${input.sceneDescription}`
+    ? `${input.sceneDescription}. Style: ${input.styleString}`
     : input.sceneDescription;
 
-  let imageUrl: string;
+  const result = await fal.subscribe("fal-ai/flux-pro/kontext/text-to-image", {
+    input: {
+      prompt,
+    },
+  });
 
-  if (input.styleRefPaths && input.styleRefPaths.length > 0) {
-    const refUrls = await Promise.all(input.styleRefPaths.map(getDownloadUrl));
-
-    const result = await fal.subscribe("fal-ai/flux-pro/kontext/max/multi", {
-      input: {
-        prompt,
-        image_urls: refUrls,
-        num_images: 1,
-        output_format: "png",
-        safety_tolerance: "2",
-      },
-    });
-
-    const output = result.data as { images?: Array<{ url: string }> };
-    if (!output.images || output.images.length === 0) {
-      throw new Error("FLUX.1 Kontext returned no images");
-    }
-    imageUrl = output.images[0].url;
-  } else {
-    // image_urls is required by the type but can be omitted at runtime
-    // when no style references are provided; cast to satisfy the type checker.
-    const result = await fal.subscribe("fal-ai/flux-pro/kontext/max/multi", {
-      input: {
-        prompt,
-        image_urls: [] as string[],
-        num_images: 1,
-        output_format: "png",
-        safety_tolerance: "2",
-      },
-    });
-
-    const output = result.data as { images?: Array<{ url: string }> };
-    if (!output.images || output.images.length === 0) {
-      throw new Error("Image generation returned no images");
-    }
-    imageUrl = output.images[0].url;
+  const output = result.data as { images?: Array<{ url: string }> };
+  if (!output.images || output.images.length === 0) {
+    throw new Error("Image generation returned no images");
   }
+
+  const imageUrl = output.images[0].url;
 
   // Download from fal.ai and upload to R2
   const imageRes = await fetch(imageUrl);

@@ -60,7 +60,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       projectId: id,
       sceneDescription: scene.sceneDescription,
       styleString: project.styleString,
-      styleRefPaths: project.styleRefPaths,
     },
   });
 

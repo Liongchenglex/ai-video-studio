@@ -35,7 +35,6 @@ export async function POST(request: NextRequest) {
       sceneId,
       sceneDescription: scene.sceneDescription,
       styleString: project.styleString,
-      styleRefPaths: project.styleRefPaths,
     });
 
     await db.update(scenes).set({
