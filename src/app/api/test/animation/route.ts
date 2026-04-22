@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
     // (fal.ai can't always fetch from R2 presigned URLs)
     console.log(`[test/animation] Scene ${scene.sortOrder} | Uploading image to fal.ai...`);
 
+    // Upload image to fal.ai via their REST upload endpoint
     const r2Object = await r2Client.send(
       new GetObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME!,
@@ -49,10 +50,20 @@ export async function POST(request: NextRequest) {
     );
     const imageBytes = await r2Object.Body!.transformToByteArray();
     const imageBuffer = Buffer.from(imageBytes);
-    const imageBlob = new Blob([imageBuffer], { type: "image/png" });
-    const imageFile = new File([imageBlob], "scene-image.png", { type: "image/png" });
 
-    const falUpload = await fal.storage.upload(imageFile);
+    // Use fal.ai's REST upload API directly (Node.js 18 doesn't have File)
+    const uploadRes = await fetch("https://fal.ai/api/storage/upload", {
+      method: "PUT",
+      headers: {
+        "Authorization": `Key ${process.env.FAL_KEY!}`,
+        "Content-Type": "image/png",
+      },
+      body: imageBuffer,
+    });
+    if (!uploadRes.ok) {
+      throw new Error(`fal.ai upload failed: ${uploadRes.status}`);
+    }
+    const { url: falUpload } = await uploadRes.json() as { url: string };
     console.log(`[test/animation] Uploaded to fal: ${falUpload}`);
 
     // Use sceneDescription as the motion prompt
