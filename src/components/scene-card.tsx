@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { RefreshCw, Loader2, ImageIcon, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,22 +38,32 @@ export function SceneCard({
   onRegenerateVoice,
 }: SceneCardProps) {
   const [audioPlaying, setAudioPlaying] = useState(false);
-  const [audioEl] = useState<HTMLAudioElement | null>(() =>
-    typeof window !== "undefined" && scene.voiceoverUrl
-      ? new Audio(scene.voiceoverUrl)
-      : null,
-  );
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Update audio element when voiceover URL changes (e.g. after polling)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (scene.voiceoverUrl) {
+      audioRef.current = new Audio(scene.voiceoverUrl);
+      audioRef.current.onended = () => setAudioPlaying(false);
+    } else {
+      audioRef.current = null;
+    }
+    return () => {
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, [scene.voiceoverUrl]);
 
   const toggleAudio = () => {
-    if (!audioEl) return;
+    if (!audioRef.current) return;
     if (audioPlaying) {
-      audioEl.pause();
-      audioEl.currentTime = 0;
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
       setAudioPlaying(false);
     } else {
-      audioEl.play();
+      audioRef.current.play();
       setAudioPlaying(true);
-      audioEl.onended = () => setAudioPlaying(false);
     }
   };
 
