@@ -66,31 +66,9 @@ export function StepVisuals({
       s.voiceoverStatus === "generating",
   );
 
-  // Poll for scene status updates only when user triggered generation
-  useEffect(() => {
-    if (!pollingActive) return;
-
-    const interval = setInterval(async () => {
-      const res = await fetch(`/api/projects/${projectId}/scenes`);
-      if (res.ok) {
-        const data = await res.json();
-        setScenes(data);
-        const stillPending = data.some(
-          (s: SceneData) =>
-            s.imageStatus === "pending" ||
-            s.imageStatus === "generating" ||
-            s.voiceoverStatus === "pending" ||
-            s.voiceoverStatus === "generating",
-        );
-        if (!stillPending) {
-          setPollingActive(false);
-          setGenerating(false);
-        }
-      }
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [pollingActive, hasAnyPending, projectId]);
+  // TODO: Re-enable polling when Inngest integration is working
+  // Disabled for now to allow granular testing of individual services
+  // useEffect(() => { ... polling logic ... }, [pollingActive, projectId]);
 
   // ── Direct test handlers (no Inngest) ──
   const [testStatus, setTestStatus] = useState<string | null>(null);
@@ -175,6 +153,28 @@ export function StepVisuals({
     }
   }, [projectId]);
 
+  const handleTestAnimation = useCallback(
+    async (sceneId: string) => {
+      setTestStatus("Generating animation clip...");
+      try {
+        const res = await fetch("/api/test/animation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, sceneId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setTestStatus(`Animation done: ${data.clipDuration}s clip — ${data.r2Key}`);
+        } else {
+          setTestStatus(`Animation failed: ${data.error}`);
+        }
+      } catch (err) {
+        setTestStatus(`Animation error: ${err instanceof Error ? err.message : "unknown"}`);
+      }
+    },
+    [projectId],
+  );
+
   const handleRegenerateImage = useCallback(
     async (sceneId: string) => {
       handleTestImage(sceneId);
@@ -229,6 +229,9 @@ export function StepVisuals({
           </Button>
           <Button size="sm" variant="outline" onClick={handleTestMusic}>
             Test Music
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => handleTestAnimation(scenes[0]?.id)} disabled={!scenes[0]?.imagePath}>
+            Test Animation (Scene 1)
           </Button>
         </div>
         {testStatus && (
