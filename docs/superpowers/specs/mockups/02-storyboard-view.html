@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unified Editor — Storyboard View</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; padding:28px; background:#0d0d10; color:#e6e6ea;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .page { max-width:1080px; margin:0 auto; }
+  h2 { font-size:20px; margin:0 0 4px; }
+  .subtitle { color:#9a9aa6; font-size:13px; margin:0 0 18px; line-height:1.5; }
+  .sb-wrap { border:1px solid #333; border-radius:10px; overflow:hidden; font-size:12px; }
+  .sb-top { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#1b1b1f; border-bottom:1px solid #333; }
+  .seg { display:flex; background:#0f0f12; border:1px solid #3a3a42; border-radius:8px; overflow:hidden; }
+  .seg div { padding:5px 12px; font-size:11px; }
+  .seg .on { background:#6d5ef0; color:#fff; font-weight:600; }
+  .seg .off { color:#9a9aa6; }
+  .sb-cta { background:#6d5ef0; color:#fff; border-radius:7px; padding:6px 12px; font-weight:600; }
+  .sb-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; padding:12px; background:#101013; }
+  .card { border:1px solid #2a2a30; border-radius:9px; overflow:hidden; background:#17171c; }
+  .card .thumb { height:84px; background:#26262e; display:flex; align-items:center; justify-content:center; color:#666; position:relative; font-size:11px;}
+  .card .thumb.done{ background:linear-gradient(135deg,#3a3470,#1e5a4a); color:#cdd;}
+  .card .thumb.gen{ background:#26262e; color:#f0a03c;}
+  .card .thumb.fail{ background:#3a1e1e; color:#ef6a6a;}
+  .badge { position:absolute; top:5px; right:5px; font-size:9px; padding:1px 6px; border-radius:20px; }
+  .badge.done{ background:#1e5a4a; color:#bdfae8;} .badge.gen{ background:#6b4a1e; color:#ffd9a3;} .badge.fail{ background:#5a1e1e; color:#ffb3b3;}
+  .card .body { padding:8px; }
+  .card .num { font-size:10px; color:#8a8a96; margin-bottom:4px; display:flex; justify-content:space-between;}
+  .row2 { margin-bottom:6px; }
+  .row2 .lab { font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:#7a7a86; }
+  .row2.desc .lab { color:#9a8fe0; } .row2.script .lab { color:#6fb8ef; }
+  .row2 .val { font-size:11px; line-height:1.45; color:#d2d2da; }
+  .tags .chip { display:inline-block; background:#2a2a30; border:1px solid #3a3a42; border-radius:20px; padding:1px 7px; font-size:9px; margin:4px 3px 0 0;}
+  .card .acts { display:flex; gap:6px; padding:0 8px 8px; }
+  .card .acts div { flex:1; text-align:center; font-size:10px; background:#23232a; border:1px solid #34343c; border-radius:6px; padding:4px;}
+  ul { font-size:13px; line-height:1.7; color:#cfcfd6; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>The Unified Editor — Storyboard View</h2>
+  <p class="subtitle">A peer view you toggle to (top-left). The scannable board — review everything at a glance after "Generate all," with description (visual) next to script (narration).</p>
+
+  <div class="sb-wrap">
+    <div class="sb-top">
+      <div class="seg"><div class="off">Timeline</div><div class="on">Storyboard</div></div>
+      <div style="font-size:11px;color:#9a9aa6;">Generating… 24 / 31 done · 1 failed</div>
+      <div class="sb-cta">✦ Generate all →</div>
+    </div>
+
+    <div class="sb-grid">
+      <div class="card">
+        <div class="thumb done">▣ frame<span class="badge done">✓ ready</span></div>
+        <div class="body">
+          <div class="num"><span>Shot 1 · Beat 1</span><span>0:00–0:04</span></div>
+          <div class="row2 desc"><div class="lab">Description (visual)</div><div class="val">Wide shot — lone peasant on a dirt road at dawn, mountains behind.</div></div>
+          <div class="row2 script"><div class="lab">Script (narration)</div><div class="val">"In 206 BC, a peasant named Liu Bang rose against the Qin."</div></div>
+          <div class="tags"><span class="chip">🧔 Liu Bang</span></div>
+        </div>
+        <div class="acts"><div>↻ Re-image</div><div>🎬 Clip</div></div>
+      </div>
+
+      <div class="card">
+        <div class="thumb gen">◴ generating…<span class="badge gen">generating</span></div>
+        <div class="body">
+          <div class="num"><span>Shot 2 · Beat 1</span><span>0:04–0:07</span></div>
+          <div class="row2 desc"><div class="lab">Description (visual)</div><div class="val">Figure atop a stone rampart, banners stirring, the Great Wall stretching off.</div></div>
+          <div class="row2 script"><div class="lab">Script (narration)</div><div class="val">"He was no general — just a man with nerve."</div></div>
+          <div class="tags"><span class="chip">🧔 Liu Bang</span><span class="chip">🧱 Great Wall</span></div>
+        </div>
+        <div class="acts"><div>↻ Re-image</div><div>🎬 Clip</div></div>
+      </div>
+
+      <div class="card">
+        <div class="thumb fail">⚠ failed<span class="badge fail">retry</span></div>
+        <div class="body">
+          <div class="num"><span>Shot 3 · Beat 2</span><span>0:07–0:11</span></div>
+          <div class="row2 desc"><div class="lab">Description (visual)</div><div class="val">Close-up — the Emperor's crown lowered onto a bowed head.</div></div>
+          <div class="row2 script"><div class="lab">Script (narration)</div><div class="val">"Within four years, he would wear the crown."</div></div>
+          <div class="tags"><span class="chip">👑 The Emperor</span></div>
+        </div>
+        <div class="acts"><div>↻ Retry</div><div>✎ Edit</div></div>
+      </div>
+
+      <div class="card">
+        <div class="thumb done">▣ frame<span class="badge done">✓ ready</span></div>
+        <div class="body">
+          <div class="num"><span>Shot 4 · Beat 3</span><span>0:11–0:15</span></div>
+          <div class="row2 desc"><div class="lab">Description (visual)</div><div class="val">Sweeping view of the imperial palace courtyard, ministers assembled.</div></div>
+          <div class="row2 script"><div class="lab">Script (narration)</div><div class="val">"He took the name Gaozu, first emperor of Han."</div></div>
+          <div class="tags"><span class="chip">🏯 Imperial Palace</span></div>
+        </div>
+        <div class="acts"><div>↻ Re-image</div><div>🎬 Clip</div></div>
+      </div>
+
+      <div class="card">
+        <div class="thumb done">▣ frame<span class="badge done">✓ ready</span></div>
+        <div class="body">
+          <div class="num"><span>Shot 5 · Beat 3</span><span>0:15–0:18</span></div>
+          <div class="row2 desc"><div class="lab">Description (visual)</div><div class="val">Low angle — throne dais, dragon banners flanking an empty seat.</div></div>
+          <div class="row2 script"><div class="lab">Script (narration)</div><div class="val">"A dynasty that would last four centuries."</div></div>
+          <div class="tags"><span class="chip">🏯 Imperial Palace</span></div>
+        </div>
+        <div class="acts"><div>↻ Re-image</div><div>🎬 Clip</div></div>
+      </div>
+
+      <div class="card">
+        <div class="thumb gen">◴ generating…<span class="badge gen">generating</span></div>
+        <div class="body">
+          <div class="num"><span>Shot 6 · Beat 4</span><span>0:18–0:22</span></div>
+          <div class="row2 desc"><div class="lab">Description (visual)</div><div class="val">Map of the Han territories spreading across a parchment.</div></div>
+          <div class="row2 script"><div class="lab">Script (narration)</div><div class="val">"From the steppe to the sea, the empire grew."</div></div>
+          <div class="tags"><span class="chip">🧱 Great Wall</span></div>
+        </div>
+        <div class="acts"><div>↻ Re-image</div><div>🎬 Clip</div></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="subtitle" style="margin-top:14px;">Why it earns its place next to the timeline:</p>
+  <ul>
+    <li><b>Scan, don't scroll.</b> All shots as cards — spot the weak frame instantly. The timeline can't show you this.</li>
+    <li><b>Description vs Script side by side</b> — the classic storyboard split: what we <i>see</i> (purple) vs what we <i>hear</i> (blue).</li>
+    <li><b>The batch-review home.</b> "Generate all" fills this board; statuses (ready / generating / failed) and per-card retry live right here.</li>
+    <li><b>Same data, no duplication.</b> Edit a prompt here or in the timeline inspector — it's one shot, two views.</li>
+  </ul>
+</div>
+</body>
+</html>

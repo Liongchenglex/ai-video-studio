@@ -51,3 +51,6 @@ next-env.d.ts
 .agents/
 .claude/
 skills-lock.json
+
+# brainstorming visual companion
+.superpowers/

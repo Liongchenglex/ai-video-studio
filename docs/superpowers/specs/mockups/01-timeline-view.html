@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unified Editor — Timeline View</title>
+<style>
+  :root { --border:#333; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:28px; background:#0d0d10; color:#e6e6ea;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .page { max-width:1080px; margin:0 auto; }
+  h2 { font-size:20px; margin:0 0 4px; }
+  .subtitle { color:#9a9aa6; font-size:13px; margin:0 0 18px; line-height:1.5; }
+  .ue-wrap { border:1px solid var(--border); border-radius:10px; overflow:hidden; font-size:12px; }
+  .ue-top { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#1b1b1f; border-bottom:1px solid #333; }
+  .ue-top .left { display:flex; gap:10px; align-items:center; }
+  .ue-pill { background:#2a2a30; border:1px solid #3a3a42; border-radius:6px; padding:3px 8px; }
+  .ue-cta { background:#6d5ef0; color:#fff; border-radius:7px; padding:6px 12px; font-weight:600; }
+  .seg { display:flex; background:#0f0f12; border:1px solid #3a3a42; border-radius:8px; overflow:hidden; margin-right:6px;}
+  .seg div { padding:4px 11px; font-size:11px; }
+  .seg .on { background:#6d5ef0; color:#fff; font-weight:600; }
+  .seg .off { color:#9a9aa6; }
+  .ue-body { display:grid; grid-template-columns: 150px 1fr 175px; min-height:430px; }
+  .ue-col { padding:10px; }
+  .ue-bible { background:#16161a; border-right:1px solid #2a2a30; }
+  .ue-center { display:flex; flex-direction:column; gap:8px; background:#101013; }
+  .ue-inspector { background:#16161a; border-left:1px solid #2a2a30; }
+  .label2 { font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:#8a8a96; margin-bottom:6px; }
+  .ent { display:flex; align-items:center; gap:6px; padding:5px; border:1px solid #2f2f38; border-radius:7px; margin-bottom:6px; background:#1d1d22; }
+  .ent .sw { width:26px; height:26px; border-radius:5px; background:#3a3a46; flex:none; display:flex; align-items:center; justify-content:center; font-size:13px;}
+  .ent small { color:#8a8a96; display:block; font-size:9px;}
+  .ue-preview { background:#000; border:1px solid #2a2a30; border-radius:8px; height:150px; display:flex; align-items:center; justify-content:center; color:#555; }
+  .ue-script { background:#1a1a1f; border:1px solid #2a2a30; border-radius:8px; padding:8px; line-height:1.6; }
+  .beatword { border-bottom:2px solid transparent; padding:1px 2px; border-radius:3px; }
+  .b1{ background:rgba(109,94,240,.18); border-bottom-color:#6d5ef0;}
+  .b2{ background:rgba(240,160,60,.16); border-bottom-color:#f0a03c;}
+  .b3{ background:rgba(60,200,160,.15); border-bottom-color:#3cc8a0;}
+  .tl { background:#1a1a1f; border:1px solid #2a2a30; border-radius:8px; padding:8px; }
+  .tl-row { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .tl-row .rl { width:46px; font-size:9px; color:#8a8a96; text-transform:uppercase; flex:none;}
+  .tl-track { flex:1; display:flex; gap:4px; }
+  .beat { height:30px; border-radius:6px; display:flex; align-items:center; padding:0 6px; font-size:10px; color:#eee; }
+  .beat.b1{ background:#3a3470; } .beat.b2{ background:#6b4a1e; } .beat.b3{ background:#1e5a4a; }
+  .shot { height:34px; border-radius:6px; background:#26262e; border:1px solid #3a3a46; display:flex; align-items:center; justify-content:center; font-size:9px; color:#bbb; position:relative;}
+  .shot .tag { position:absolute; top:-6px; right:-4px; font-size:9px; }
+  .vo { height:14px; border-radius:4px; background:linear-gradient(90deg,#2563eb,#3b82f6); flex:1; }
+  .ins-img { width:100%; height:90px; background:#26262e; border:1px solid #3a3a46; border-radius:7px; display:flex; align-items:center; justify-content:center; color:#666; margin-bottom:8px;}
+  .ins-field { background:#1d1d22; border:1px solid #2f2f38; border-radius:6px; padding:6px; margin-bottom:7px; color:#cfcfd6;}
+  .ins-field .label2 { margin-bottom:3px; }
+  .chip { display:inline-block; background:#2a2a30; border:1px solid #3a3a42; border-radius:20px; padding:1px 7px; font-size:9px; margin:2px 2px 0 0;}
+  .btn-sm { background:#2a2a30; border:1px solid #3a3a42; border-radius:6px; padding:5px; text-align:center; margin-top:4px;}
+  .playhead-note{ color:#ef4444; }
+  ul { font-size:13px; line-height:1.7; color:#cfcfd6; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>The Unified Editor — Timeline View</h2>
+  <p class="subtitle">One screen for writing, voicing &amp; storyboarding. Two-layer timeline (beats over shots), inline editable script, reference bible always in reach.</p>
+
+  <div class="ue-wrap">
+    <div class="ue-top">
+      <div class="left">
+        <div class="seg"><div class="on">Timeline</div><div class="off">Storyboard</div></div>
+        <span style="font-weight:600;">▣ Rise of Han</span>
+        <span class="ue-pill">5:02</span>
+        <span class="ue-pill">12 beats · 31 shots</span>
+        <span class="ue-pill">▶ Preview</span>
+      </div>
+      <div class="ue-cta">✦ Generate all →</div>
+    </div>
+
+    <div class="ue-body">
+      <div class="ue-col ue-bible">
+        <div class="label2">Cast &amp; Locations</div>
+        <div class="ent"><div class="sw">🧔</div><div>Liu Bang<small>character · 18 shots</small></div></div>
+        <div class="ent"><div class="sw">👑</div><div>The Emperor<small>character · 6 shots</small></div></div>
+        <div class="ent"><div class="sw">🏯</div><div>Imperial Palace<small>location · 9 shots</small></div></div>
+        <div class="ent"><div class="sw">🧱</div><div>Great Wall<small>location · 4 shots</small></div></div>
+        <div class="btn-sm">+ Auto-extract from script</div>
+        <div style="margin-top:10px;font-size:9px;color:#8a8a96;">Each entity = one multi-view reference sheet. Tagged shots condition on it.</div>
+      </div>
+
+      <div class="ue-col ue-center">
+        <div class="ue-preview">▶ Video preview (shot under playhead)</div>
+
+        <div>
+          <div class="label2">Script — edit in place, re-voices only the beat you touch</div>
+          <div class="ue-script">
+            <span class="beatword b1">In 206 BC, a peasant named Liu Bang rose against the Qin.</span>
+            <span class="beatword b2">He was no general — just a man with nerve and timing.</span>
+            <span class="beatword b3">Within four years, he would wear the emperor's crown.</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="label2">Timeline — <span class="playhead-note">▮ playhead</span></div>
+          <div class="tl">
+            <div class="tl-row">
+              <div class="rl">Beats</div>
+              <div class="tl-track">
+                <div class="beat b1" style="flex:5">Beat 1 · Liu Bang rises</div>
+                <div class="beat b2" style="flex:3">Beat 2</div>
+                <div class="beat b3" style="flex:4">Beat 3</div>
+              </div>
+            </div>
+            <div class="tl-row">
+              <div class="rl">Shots</div>
+              <div class="tl-track">
+                <div class="shot" style="flex:2">Shot 1<span class="tag">🧔</span></div>
+                <div class="shot" style="flex:3">Shot 2<span class="tag">🧔🧱</span></div>
+                <div class="shot" style="flex:3">Shot 3<span class="tag">👑</span></div>
+                <div class="shot" style="flex:4">Shot 4<span class="tag">🏯</span></div>
+              </div>
+            </div>
+            <div class="tl-row">
+              <div class="rl">Voice</div>
+              <div class="tl-track"><div class="vo"></div></div>
+            </div>
+          </div>
+          <div style="font-size:9px;color:#8a8a96;margin-top:4px;">One beat can hold several shots. Re-cut visuals without touching audio. Emoji = entities tagged in the shot.</div>
+        </div>
+      </div>
+
+      <div class="ue-col ue-inspector">
+        <div class="label2">Shot 2 — selected</div>
+        <div class="ins-img">image / clip preview</div>
+        <div class="ins-field"><div class="label2">In this shot</div><span class="chip">🧔 Liu Bang</span><span class="chip">🧱 Great Wall</span><span class="chip">+ tag</span></div>
+        <div class="ins-field"><div class="label2">Image prompt</div>Wide shot, lone figure atop a rampart at dawn…</div>
+        <div class="ins-field"><div class="label2">Motion</div>slow push-in, banners stir</div>
+        <div class="btn-sm">↻ Re-image</div>
+        <div class="btn-sm">🎬 Generate clip</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="subtitle" style="margin-top:14px;">Design intent:</p>
+  <ul>
+    <li><b>No separate "steps."</b> Script, voice, and storyboard are one screen. The old stepper shrinks to a short first-run setup (style + brief), then you live here.</li>
+    <li><b>"Generate all" (top-right)</b> is the directing move — batch every image/clip, watch a queue, review thumbnails. Per-shot buttons stay in the inspector for fixes.</li>
+    <li><b>Bible on the left</b> is always visible so consistency isn't a thing you forget to do.</li>
+  </ul>
+</div>
+</body>
+</html>
