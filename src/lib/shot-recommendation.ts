@@ -18,7 +18,12 @@ import Anthropic from "@anthropic-ai/sdk";
 const anthropic = new Anthropic();
 
 const MAX_SHOT_SECONDS = 8;
-const DEFAULT_MOTION_PROMPT = "subtle cinematic camera motion — slow push-in";
+// Placeholder only — meant to be overridden by "AI suggest" or manual edit
+// before clip generation. Kept deliberately neutral: no dramatic zoom, no
+// camera-only bias. Motion quality actually improves by the user (or Haiku)
+// writing a subject-action-first prompt before generating the clip.
+const DEFAULT_MOTION_PROMPT =
+  "the subject holds its pose while the scene breathes — faint ambient motion, minimal camera drift";
 
 export interface RecommendedShot {
   startSeconds: number;
@@ -119,20 +124,28 @@ const PROMPTS_TOOL: Anthropic.Tool = {
   },
 };
 
-function buildSystemPrompt(styleString?: string | null): string {
+function buildSystemPrompt(script: string, styleString?: string | null): string {
   const styleContext = styleString
-    ? `\n\nVisual style (every prompt must fit this style): ${styleString}`
+    ? `\n\nVisual style (the project's style profile will handle how the images LOOK): ${styleString}`
     : "";
 
   return `You generate image prompts for an AI-assisted video editor.
 
-You'll receive a JSON array of short voiceover fragments. For each fragment, return ONE image prompt describing the frozen visual moment the viewer sees while that narration is spoken.
+You'll receive the full project script (for context) and a JSON array of short voiceover fragments. For each fragment, return ONE image prompt describing the frozen visual moment the viewer sees while that narration is spoken.
+
+## Project script context
+The following is the full narrated script for this video. Every image prompt you generate MUST be historically, culturally, and narratively consistent with this script. If the script is about the Qin Dynasty, every subject (people, buildings, dress, props) must be ancient Chinese — not European, not generic medieval. If it's about the moon landing, every subject must fit 1960s space-age. Read the script and internalize the world before writing prompts.
+
+<script>
+${script}
+</script>
 
 ## Rules
 1. Return the same number of prompts as input fragments, in the same order. A validator will check count.
-2. Each prompt: ONE concrete subject, specific composition (wide shot / close-up / bird's eye / profile), dominant colors, lighting, mood. 20-40 words.
-3. NO motion verbs ("zooms", "pans", "transitions"). NO abstract concepts. Think "a still photograph of this moment".
-4. Each prompt should feel distinct from its neighbors — different subject, angle, or moment.${styleContext}
+2. Each prompt: ONE concrete subject with specific composition (wide shot / close-up / bird's eye / profile). 15-30 words.
+3. **DO NOT specify colors, color palettes, lighting temperature, or art style.** The project's style profile handles all of that via a separate layer — your prompts get "double-styled" if you add color or style words. Focus ONLY on subject + composition.
+4. NO motion verbs ("zooms", "pans", "transitions", "moves"). NO abstract concepts. Think "what's in this still photograph — who, where, doing what".
+5. Each prompt should feel distinct from its neighbors — different subject, angle, or moment. Don't repeat the same mental image.${styleContext}
 
 Call save_image_prompts with your array.`;
 }
@@ -185,7 +198,7 @@ export async function recommendShots(input: Input): Promise<RecommendedShot[]> {
   const stream = anthropic.messages.stream({
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 16000,
-    system: buildSystemPrompt(input.styleString),
+    system: buildSystemPrompt(input.script, input.styleString),
     tools: [PROMPTS_TOOL],
     tool_choice: { type: "tool", name: "save_image_prompts" },
     messages: [

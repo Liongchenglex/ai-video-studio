@@ -1,9 +1,10 @@
 /**
- * POST /api/projects/[id]/shots/suggest-prompt
+ * POST /api/projects/[id]/shots/suggest-image
  * Body: { voText }
- * Returns { imagePrompt, motionPrompt } suggested by Claude for the given
- * voiceover fragment, using the project's style string for conditioning.
- * Used inline from the editor's gap-create form and the shot-edit side panel.
+ * Returns { imagePrompt } — one Haiku-generated image prompt for the given
+ * VO fragment, culturally / narratively anchored to the project's script.
+ * Style is handled by the style profile layer; this prompt should describe
+ * subject + composition only.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -23,22 +24,18 @@ import {
 const anthropic = new Anthropic();
 type Params = { params: Promise<{ id: string }> };
 
-const SUGGEST_TOOL: Anthropic.Tool = {
-  name: "save_prompts",
-  description: "Save the suggested image and motion prompts for this shot.",
+const IMAGE_TOOL: Anthropic.Tool = {
+  name: "save_image_prompt",
+  description: "Save the suggested image prompt for this shot.",
   input_schema: {
     type: "object" as const,
     properties: {
       image_prompt: {
         type: "string",
-        description: "A frozen visual moment: ONE concrete subject, specific composition (wide/close-up/profile), dominant colors, lighting, mood. 20-40 words. NO motion verbs.",
-      },
-      motion_prompt: {
-        type: "string",
-        description: "One or two camera/subject motion actions for ~6 seconds. Short. Example: 'slow push-in as torches flicker' or 'parallax pan across the skyline'.",
+        description: "A frozen visual moment: ONE concrete subject, specific composition (wide / close-up / profile). 15-30 words. DO NOT specify colors, palette, lighting temperature, or art style — those come from the project's style profile layer. Focus only on subject + composition. NO motion verbs.",
       },
     },
-    required: ["image_prompt", "motion_prompt"],
+    required: ["image_prompt"],
   },
 };
 
@@ -73,17 +70,22 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   const styleContext = project.styleString
-    ? `\n\nVisual style (fit this style): ${project.styleString}`
+    ? `\n\nVisual style (how the image will LOOK — do not re-specify in your prompt): ${project.styleString}`
     : "";
 
+  const projectContext = project.script
+    ? `\n\n<project-script>\n${project.script}\n</project-script>\n\nEvery subject you propose must be historically / culturally / narratively consistent with this script.`
+    : project.brief
+      ? `\n\nThe video is about: ${project.brief}\n\nEvery subject you propose must be culturally / narratively consistent with this topic.`
+      : "";
+
   try {
-    // Haiku — this is a small creative call, no need for Sonnet's reasoning.
     const stream = anthropic.messages.stream({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 500,
-      system: `You suggest image + motion prompts for one shot in an AI video editor. The shot plays during this narration fragment.${styleContext}\n\nReturn via the save_prompts tool.`,
-      tools: [SUGGEST_TOOL],
-      tool_choice: { type: "tool", name: "save_prompts" },
+      max_tokens: 400,
+      system: `You suggest a single image prompt for one shot in an AI video editor. The shot plays during the provided narration fragment.${projectContext}${styleContext}\n\nReturn via the save_image_prompt tool. Do not specify colors or art style — those come from the style layer.`,
+      tools: [IMAGE_TOOL],
+      tool_choice: { type: "tool", name: "save_image_prompt" },
       messages: [
         {
           role: "user",
@@ -94,24 +96,16 @@ export async function POST(request: NextRequest, { params }: Params) {
     const response = await stream.finalMessage();
 
     const toolUse = response.content.find(
-      (b) => b.type === "tool_use" && b.name === "save_prompts",
+      (b) => b.type === "tool_use" && b.name === "save_image_prompt",
     );
     if (!toolUse || toolUse.type !== "tool_use") {
-      throw new Error("Haiku didn't call save_prompts");
+      throw new Error("Haiku didn't call save_image_prompt");
     }
-
-    const { image_prompt, motion_prompt } = toolUse.input as {
-      image_prompt: string;
-      motion_prompt: string;
-    };
-
-    return NextResponse.json({
-      imagePrompt: image_prompt,
-      motionPrompt: motion_prompt,
-    });
+    const { image_prompt } = toolUse.input as { image_prompt: string };
+    return NextResponse.json({ imagePrompt: image_prompt });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
-    console.error("[shots/suggest-prompt] failed:", msg);
+    console.error("[shots/suggest-image] failed:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

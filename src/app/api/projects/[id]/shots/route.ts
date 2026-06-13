@@ -20,7 +20,10 @@ import { deriveVOText } from "@/lib/vo-text";
 
 type Params = { params: Promise<{ id: string }> };
 
-const DEFAULT_MOTION_PROMPT = "subtle cinematic camera motion — slow push-in";
+// Same placeholder as shot-recommendation's default — user is expected to
+// tweak via "AI suggest" or type manually before generating the clip.
+const DEFAULT_MOTION_PROMPT =
+  "the subject holds its pose while the scene breathes — faint ambient motion, minimal camera drift";
 
 export async function POST(request: NextRequest, { params }: Params) {
   const rateLimitError = applyRateLimit(request, "mutation");

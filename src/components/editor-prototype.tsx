@@ -24,6 +24,8 @@ import {
   Sparkles,
   Loader2,
   Plus,
+  ImageIcon,
+  Film,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -80,10 +82,21 @@ export function EditorPrototype({ projectId, script, voiceoverUrl, durationSecon
     return audioRef.current;
   }, [voiceoverUrl]);
 
+  const playFromPlayhead = () => {
+    const a = ensureAudio();
+    if (!a) return;
+    // If we're at the very end, restart from 0; otherwise resume from the playhead.
+    const start = playheadSeconds >= totalDuration - 0.1 ? 0 : playheadSeconds;
+    a.currentTime = start;
+    setPlayheadSeconds(start);
+    a.play().catch(() => setPlaying(false));
+    setPlaying(true);
+  };
   const playFromStart = () => {
     const a = ensureAudio();
     if (!a) return;
     a.currentTime = 0;
+    setPlayheadSeconds(0);
     a.play().catch(() => setPlaying(false));
     setPlaying(true);
   };
@@ -305,8 +318,14 @@ export function EditorPrototype({ projectId, script, voiceoverUrl, durationSecon
         if (res.ok) {
           const { left, right } = (await res.json()) as { left: ShotData; right: ShotData };
           setShots((prev) => {
+            const original = prev.find((s) => s.id === shotId);
             const without = prev.filter((s) => s.id !== shotId);
-            return [...without, left, right].sort((a, b) => a.startSeconds - b.startSeconds);
+            // Preserve the original's presigned URLs on the LEFT half — the
+            // R2 asset didn't move, only the shot bounds narrowed.
+            const mergedLeft: ShotData = original
+              ? { ...original, ...left, imageUrl: original.imageUrl, clipUrl: original.clipUrl }
+              : left;
+            return [...without, mergedLeft, right].sort((a, b) => a.startSeconds - b.startSeconds);
           });
           setSelection({ type: "shot", shotId: right.id });
         } else {
@@ -358,7 +377,83 @@ export function EditorPrototype({ projectId, script, voiceoverUrl, durationSecon
       });
       if (res.ok) {
         const updated = (await res.json()) as ShotData;
-        setShots((prev) => prev.map((s) => (s.id === shotId ? updated : s)));
+        // Spread-merge so client-only fields (imageUrl, clipUrl) survive —
+        // the PATCH response only contains raw DB fields.
+        setShots((prev) =>
+          prev.map((s) => (s.id === shotId ? { ...s, ...updated } : s)),
+        );
+      }
+    },
+    [projectId],
+  );
+
+  const generateShotImage = useCallback(
+    async (shotId: string) => {
+      setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, imageStatus: "generating" } : s)));
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/image`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          console.warn("[editor] image generation failed:", await res.text());
+          setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, imageStatus: "failed" } : s)));
+          return;
+        }
+        const data = (await res.json()) as {
+          imagePath: string;
+          imageUrl: string;
+          imageStatus: string;
+        };
+        setShots((prev) =>
+          prev.map((s) =>
+            s.id === shotId
+              ? { ...s, imagePath: data.imagePath, imageUrl: data.imageUrl, imageStatus: "done" }
+              : s,
+          ),
+        );
+      } catch (err) {
+        console.error("[editor] image generation error:", err);
+        setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, imageStatus: "failed" } : s)));
+      }
+    },
+    [projectId],
+  );
+
+  const generateShotClip = useCallback(
+    async (shotId: string, model: "ltx" | "hailuo" = "ltx") => {
+      const endpoint = model === "hailuo" ? "clip-hailuo" : "clip";
+      setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, clipStatus: "generating" } : s)));
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/${endpoint}`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          console.warn("[editor] clip generation failed:", await res.text());
+          setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, clipStatus: "failed" } : s)));
+          return;
+        }
+        const data = (await res.json()) as {
+          clipPath: string;
+          clipUrl: string;
+          clipStatus: string;
+          clipDurationSeconds: number;
+        };
+        setShots((prev) =>
+          prev.map((s) =>
+            s.id === shotId
+              ? {
+                  ...s,
+                  clipPath: data.clipPath,
+                  clipUrl: data.clipUrl,
+                  clipStatus: "done",
+                  clipDurationSeconds: data.clipDurationSeconds,
+                }
+              : s,
+          ),
+        );
+      } catch (err) {
+        console.error("[editor] clip generation error:", err);
+        setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, clipStatus: "failed" } : s)));
       }
     },
     [projectId],
@@ -393,6 +488,65 @@ export function EditorPrototype({ projectId, script, voiceoverUrl, durationSecon
   // ── Side panel ──
   const [panelOpen, setPanelOpen] = useState(true);
 
+  // ── Main preview sync ──
+  // A full-size video player that plays the shot-under-playhead's clip in sync
+  // with the scrubbing VO. Uses `playheadShot` (not selection) so the preview
+  // always reflects what's playing, even when the user has clicked a different
+  // shot to edit its prompts.
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // When the shot under the playhead changes, swap to its clip.
+  useEffect(() => {
+    const v = previewVideoRef.current;
+    if (!v) return;
+
+    if (!playheadShot?.clipUrl) {
+      v.pause();
+      v.removeAttribute("src");
+      v.load();
+      return;
+    }
+
+    // Only swap source when shot changes, otherwise let the video run naturally.
+    if (!v.src.endsWith(encodeURI(playheadShot.clipUrl)) && v.src !== playheadShot.clipUrl) {
+      v.src = playheadShot.clipUrl;
+      v.load();
+    }
+
+    const localTime = Math.max(0, playheadSeconds - playheadShot.startSeconds);
+    if (Math.abs(v.currentTime - localTime) > 0.5) {
+      v.currentTime = localTime;
+    }
+    if (playing) {
+      v.play().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playheadShot?.id, playheadShot?.clipUrl]);
+
+  // When play/pause toggles, sync the video.
+  useEffect(() => {
+    const v = previewVideoRef.current;
+    if (!v) return;
+    if (playing && playheadShot?.clipUrl) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing]);
+
+  // When user seeks while paused, re-seek the video too.
+  useEffect(() => {
+    if (playing) return;
+    const v = previewVideoRef.current;
+    if (!v || !playheadShot?.clipUrl) return;
+    const localTime = Math.max(0, playheadSeconds - playheadShot.startSeconds);
+    if (Math.abs(v.currentTime - localTime) > 0.2) {
+      v.currentTime = localTime;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playheadSeconds]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -405,7 +559,17 @@ export function EditorPrototype({ projectId, script, voiceoverUrl, durationSecon
         <div className="flex items-center gap-2">
           <Badge variant="outline">{totalDuration}s total</Badge>
           <Badge variant="outline">{shots.length} shots</Badge>
-          <Button onClick={playing ? stopPlayback : playFromStart} disabled={!voiceoverUrl}>
+          {!playing && (
+            <Button
+              variant="outline"
+              onClick={playFromStart}
+              disabled={!voiceoverUrl}
+              title="Play from 0:00"
+            >
+              <Play className="mr-2 h-4 w-4" /> Start
+            </Button>
+          )}
+          <Button onClick={playing ? stopPlayback : playFromPlayhead} disabled={!voiceoverUrl}>
             {playing ? (
               <>
                 <Square className="mr-2 h-4 w-4" /> Stop
@@ -423,6 +587,38 @@ export function EditorPrototype({ projectId, script, voiceoverUrl, durationSecon
           )}
         </div>
       </div>
+
+      {/* Main video preview — plays the active shot's clip synced to VO */}
+      <Card>
+        <CardContent className="p-3">
+          <div className="relative mx-auto bg-black rounded overflow-hidden aspect-video" style={{ maxHeight: "50vh" }}>
+            <video
+              ref={previewVideoRef}
+              muted
+              playsInline
+              className="w-full h-full object-contain"
+            />
+            {!playheadShot?.clipUrl && (
+              <div className="absolute inset-0 flex items-center justify-center text-xs text-white/60 z-10">
+                {playheadShot
+                  ? playheadShot.imageUrl
+                    ? "Clip not generated yet — showing image only"
+                    : "No clip here"
+                  : playheadSeconds > 0
+                    ? "Gap — no shot at this time"
+                    : "Press Play to preview"}
+              </div>
+            )}
+            {playheadShot?.imageUrl && !playheadShot.clipUrl && (
+              <img
+                src={playheadShot.imageUrl}
+                alt=""
+                className="absolute inset-0 w-full h-full object-contain opacity-80"
+              />
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className={`grid gap-4 ${panelOpen ? "md:grid-cols-[minmax(0,2fr)_22rem]" : "md:grid-cols-1"}`}>
         <Card>
@@ -599,6 +795,9 @@ export function EditorPrototype({ projectId, script, voiceoverUrl, durationSecon
                   onUpdatePrompts={updatePrompts}
                   onSplit={(at) => splitShot(selectedShot.id, at)}
                   onDelete={() => deleteShot(selectedShot.id)}
+                  onGenerateImage={() => generateShotImage(selectedShot.id)}
+                  onGenerateClip={() => generateShotClip(selectedShot.id, "ltx")}
+                  onGenerateClipHailuo={() => generateShotClip(selectedShot.id, "hailuo")}
                   busy={busy}
                 />
               ) : activeShot ? (
@@ -660,6 +859,9 @@ function ShotEditPanel({
   onUpdatePrompts,
   onSplit,
   onDelete,
+  onGenerateImage,
+  onGenerateClip,
+  onGenerateClipHailuo,
   busy,
 }: {
   projectId: string;
@@ -668,16 +870,43 @@ function ShotEditPanel({
   onUpdatePrompts: (shotId: string, imagePrompt: string, motionPrompt: string) => Promise<void>;
   onSplit: (atSeconds: number) => void;
   onDelete: () => void;
+  onGenerateImage: () => void;
+  onGenerateClip: () => void;
+  onGenerateClipHailuo: () => void;
   busy: boolean;
 }) {
   const [imagePrompt, setImagePrompt] = useState(shot.imagePrompt);
   const [motionPrompt, setMotionPrompt] = useState(shot.motionPrompt);
-  const [suggesting, setSuggesting] = useState(false);
+  const [suggestingImage, setSuggestingImage] = useState(false);
+  const [suggestingMotion, setSuggestingMotion] = useState(false);
+
+  // Which asset the side panel preview shows. Auto-switches to whichever
+  // the user just regenerated, so regen results are always visible.
+  const [previewMode, setPreviewMode] = useState<"image" | "clip">(
+    shot.clipUrl ? "clip" : "image",
+  );
 
   useEffect(() => {
     setImagePrompt(shot.imagePrompt);
     setMotionPrompt(shot.motionPrompt);
   }, [shot.id, shot.imagePrompt, shot.motionPrompt]);
+
+  // Flip to the image preview when an image URL updates (regen happened).
+  // useRef the previous URL so we only react to actual changes.
+  const prevImageUrl = useRef(shot.imageUrl);
+  const prevClipUrl = useRef(shot.clipUrl);
+  useEffect(() => {
+    if (shot.imageUrl && shot.imageUrl !== prevImageUrl.current) {
+      setPreviewMode("image");
+    }
+    prevImageUrl.current = shot.imageUrl;
+  }, [shot.imageUrl]);
+  useEffect(() => {
+    if (shot.clipUrl && shot.clipUrl !== prevClipUrl.current) {
+      setPreviewMode("clip");
+    }
+    prevClipUrl.current = shot.clipUrl;
+  }, [shot.clipUrl]);
 
   const persistIfChanged = () => {
     if (imagePrompt !== shot.imagePrompt || motionPrompt !== shot.motionPrompt) {
@@ -688,32 +917,83 @@ function ShotEditPanel({
   const canSplit =
     playheadSeconds > shot.startSeconds + 1 && playheadSeconds < shot.endSeconds - 1;
 
-  const aiSuggest = async () => {
+  const aiSuggestImage = async () => {
     if (!shot.text) return;
-    setSuggesting(true);
+    setSuggestingImage(true);
     try {
-      const res = await fetch(`/api/projects/${projectId}/shots/suggest-prompt`, {
+      const res = await fetch(`/api/projects/${projectId}/shots/suggest-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ voText: shot.text }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { imagePrompt: string; motionPrompt: string };
+        const data = (await res.json()) as { imagePrompt: string };
         setImagePrompt(data.imagePrompt);
-        setMotionPrompt(data.motionPrompt);
-        await onUpdatePrompts(shot.id, data.imagePrompt, data.motionPrompt);
+        await onUpdatePrompts(shot.id, data.imagePrompt, motionPrompt);
       }
     } finally {
-      setSuggesting(false);
+      setSuggestingImage(false);
     }
   };
 
+  const aiSuggestMotion = async () => {
+    if (!shot.text || !imagePrompt.trim()) return;
+    setSuggestingMotion(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/shots/suggest-motion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voText: shot.text, imagePrompt }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { motionPrompt: string };
+        setMotionPrompt(data.motionPrompt);
+        await onUpdatePrompts(shot.id, imagePrompt, data.motionPrompt);
+      }
+    } finally {
+      setSuggestingMotion(false);
+    }
+  };
+
+  const hasImage = !!shot.imageUrl;
+  const hasClip = !!shot.clipUrl;
+  const effectiveMode = previewMode === "clip" && !hasClip ? "image" : previewMode;
+
   return (
     <>
-      {shot.clipUrl ? (
-        <video key={shot.id} src={shot.clipUrl} autoPlay muted loop className="w-full rounded" />
-      ) : shot.imageUrl ? (
-        <img src={shot.imageUrl} alt="" className="w-full rounded" />
+      {(hasImage || hasClip) && (
+        <div className="flex gap-1 text-[10px]">
+          <button
+            type="button"
+            onClick={() => setPreviewMode("image")}
+            disabled={!hasImage}
+            className={`flex-1 px-2 py-1 rounded transition ${
+              effectiveMode === "image"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted hover:bg-muted/80 disabled:opacity-40 disabled:hover:bg-muted"
+            }`}
+          >
+            Image{hasImage ? "" : " (none)"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPreviewMode("clip")}
+            disabled={!hasClip}
+            className={`flex-1 px-2 py-1 rounded transition ${
+              effectiveMode === "clip"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted hover:bg-muted/80 disabled:opacity-40 disabled:hover:bg-muted"
+            }`}
+          >
+            Clip{hasClip ? "" : " (none)"}
+          </button>
+        </div>
+      )}
+
+      {effectiveMode === "clip" && shot.clipUrl ? (
+        <video key={shot.clipUrl} src={shot.clipUrl} autoPlay muted loop className="w-full rounded" />
+      ) : effectiveMode === "image" && shot.imageUrl ? (
+        <img key={shot.imageUrl} src={shot.imageUrl} alt="" className="w-full rounded" />
       ) : (
         <div className="w-full aspect-video rounded bg-muted flex items-center justify-center">
           <span className="text-xs text-muted-foreground">No image yet</span>
@@ -736,8 +1016,8 @@ function ShotEditPanel({
       <div className="space-y-1">
         <div className="flex items-center justify-between">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Image prompt</p>
-          <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={aiSuggest} disabled={suggesting || !shot.text}>
-            {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+          <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={aiSuggestImage} disabled={suggestingImage || !shot.text}>
+            {suggestingImage ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
             <span className="ml-1">AI suggest</span>
           </Button>
         </div>
@@ -751,7 +1031,20 @@ function ShotEditPanel({
       </div>
 
       <div className="space-y-1">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Motion prompt</p>
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Motion prompt</p>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 text-[10px]"
+            onClick={aiSuggestMotion}
+            disabled={suggestingMotion || !shot.text || !imagePrompt.trim()}
+            title={!imagePrompt.trim() ? "Write an image prompt first — motion suggestions need it" : "AI suggest motion"}
+          >
+            {suggestingMotion ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            <span className="ml-1">AI suggest</span>
+          </Button>
+        </div>
         <textarea
           value={motionPrompt}
           onChange={(e) => setMotionPrompt(e.target.value)}
@@ -761,7 +1054,64 @@ function ShotEditPanel({
         />
       </div>
 
+      {/* Asset generation */}
       <div className="flex gap-2 pt-1">
+        <Button
+          size="sm"
+          variant="default"
+          className="flex-1"
+          onClick={onGenerateImage}
+          disabled={shot.imageStatus === "generating" || busy}
+          title={shot.imagePath ? "Regenerate image" : "Generate image"}
+        >
+          {shot.imageStatus === "generating" ? (
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <ImageIcon className="mr-1 h-3 w-3" />
+          )}
+          {shot.imagePath ? "Re-image" : "Image"}
+        </Button>
+        <Button
+          size="sm"
+          variant="default"
+          className="flex-1"
+          onClick={onGenerateClip}
+          disabled={!shot.imagePath || shot.clipStatus === "generating" || busy}
+          title={!shot.imagePath ? "Generate image first" : shot.clipPath ? "Regenerate clip (LTX-2.3)" : "Generate clip (LTX-2.3)"}
+        >
+          {shot.clipStatus === "generating" ? (
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <Film className="mr-1 h-3 w-3" />
+          )}
+          {shot.clipPath ? "Re-clip" : "Clip"} (LTX)
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="flex-1"
+          onClick={onGenerateClipHailuo}
+          disabled={!shot.imagePath || shot.clipStatus === "generating" || busy}
+          title={!shot.imagePath ? "Generate image first" : "A/B test: generate with Hailuo 02 instead of LTX (overwrites current clip)"}
+        >
+          {shot.clipStatus === "generating" ? (
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <Film className="mr-1 h-3 w-3" />
+          )}
+          Clip (Hailuo)
+        </Button>
+      </div>
+
+      {shot.imageStatus === "failed" && (
+        <p className="text-[10px] text-destructive">Image generation failed. Retry above.</p>
+      )}
+      {shot.clipStatus === "failed" && (
+        <p className="text-[10px] text-destructive">Clip generation failed. Retry above.</p>
+      )}
+
+      {/* Timeline ops */}
+      <div className="flex gap-2">
         <Button
           size="sm"
           variant="outline"
@@ -799,24 +1149,42 @@ function GapCreateForm({
 }) {
   const [imagePrompt, setImagePrompt] = useState("");
   const [motionPrompt, setMotionPrompt] = useState("");
-  const [suggesting, setSuggesting] = useState(false);
+  const [suggestingImage, setSuggestingImage] = useState(false);
+  const [suggestingMotion, setSuggestingMotion] = useState(false);
 
-  const aiSuggest = async () => {
+  const aiSuggestImage = async () => {
     if (!voText.trim()) return;
-    setSuggesting(true);
+    setSuggestingImage(true);
     try {
-      const res = await fetch(`/api/projects/${projectId}/shots/suggest-prompt`, {
+      const res = await fetch(`/api/projects/${projectId}/shots/suggest-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ voText: voText.trim() }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { imagePrompt: string; motionPrompt: string };
+        const data = (await res.json()) as { imagePrompt: string };
         setImagePrompt(data.imagePrompt);
+      }
+    } finally {
+      setSuggestingImage(false);
+    }
+  };
+
+  const aiSuggestMotion = async () => {
+    if (!voText.trim() || !imagePrompt.trim()) return;
+    setSuggestingMotion(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/shots/suggest-motion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voText: voText.trim(), imagePrompt }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { motionPrompt: string };
         setMotionPrompt(data.motionPrompt);
       }
     } finally {
-      setSuggesting(false);
+      setSuggestingMotion(false);
     }
   };
 
@@ -843,8 +1211,8 @@ function GapCreateForm({
       <div className="space-y-1">
         <div className="flex items-center justify-between">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Image prompt</p>
-          <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={aiSuggest} disabled={suggesting || !voText.trim()}>
-            {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+          <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={aiSuggestImage} disabled={suggestingImage || !voText.trim()}>
+            {suggestingImage ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
             <span className="ml-1">AI suggest</span>
           </Button>
         </div>
@@ -852,18 +1220,31 @@ function GapCreateForm({
           value={imagePrompt}
           onChange={(e) => setImagePrompt(e.target.value)}
           rows={4}
-          placeholder="Describe what the viewer sees in this shot: subject, composition, colors, lighting, mood. No motion verbs."
+          placeholder="Describe what the viewer sees: subject + composition. No motion verbs, no colors (style layer handles those)."
           className="w-full rounded border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
         />
       </div>
 
       <div className="space-y-1">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Motion prompt (optional)</p>
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Motion prompt (optional)</p>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 text-[10px]"
+            onClick={aiSuggestMotion}
+            disabled={suggestingMotion || !voText.trim() || !imagePrompt.trim()}
+            title={!imagePrompt.trim() ? "Write or suggest an image prompt first" : "AI suggest motion"}
+          >
+            {suggestingMotion ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            <span className="ml-1">AI suggest</span>
+          </Button>
+        </div>
         <textarea
           value={motionPrompt}
           onChange={(e) => setMotionPrompt(e.target.value)}
           rows={2}
-          placeholder="Leave blank for default: subtle cinematic camera motion"
+          placeholder="Leave blank for default placeholder — you can also regenerate after the image exists."
           className="w-full rounded border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
         />
       </div>
