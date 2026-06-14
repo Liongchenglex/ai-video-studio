@@ -13,6 +13,7 @@ import {
   pgEnum,
   jsonb,
   integer,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 
 // ─── BetterAuth tables ───────────────────────────────────────────────
@@ -88,6 +89,12 @@ export const projectStatusEnum = pgEnum("project_status", [
   "generating",
   "ready",
   "published",
+]);
+
+export const entityTypeEnum = pgEnum("entity_type", [
+  "character",
+  "location",
+  "object",
 ]);
 
 export const projects = pgTable(
@@ -203,6 +210,17 @@ export const shots = pgTable(
     clipStatus: generationStatusEnum("clip_status").default("pending"),
     clipDurationSeconds: integer("clip_duration_seconds"),
 
+    // ── v4.0: beat membership + sub-beat offsets ──
+    // beatId is nullable during the additive migration; backfilled later.
+    beatId: uuid("beat_id").references(() => beats.id, { onDelete: "cascade" }),
+    startInBeat: doublePrecision("start_in_beat"),
+    endInBeat: doublePrecision("end_in_beat"),
+
+    // ── v4.0: Reference Bible tagging (F-16) ──
+    referencedEntityIds: jsonb("referenced_entity_ids")
+      .$type<string[]>()
+      .default([]),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -216,3 +234,74 @@ export const shots = pgTable(
 
 export type Shot = typeof shots.$inferSelect;
 export type NewShot = typeof shots.$inferInsert;
+
+// ─── Beats (v4.0) ────────────────────────────────────────────────────
+// A beat is one sentence/clause of narration. It owns its own text and
+// its own voiceover audio clip. Beats stack sequentially: a beat's
+// absolute start = sum of prior beats' voDurationSeconds. Shots are the
+// visuals under a beat (see shots.beatId).
+
+export const beats = pgTable(
+  "beats",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull(),
+
+    // Narration text — source of truth for this beat's words.
+    text: text("text").notNull(),
+
+    // Per-beat voiceover audio.
+    voPath: text("vo_path"),
+    voStatus: generationStatusEnum("vo_status").default("pending"),
+    voDurationSeconds: doublePrecision("vo_duration_seconds"),
+    voTimestamps: jsonb("vo_timestamps").$type<{
+      characters: string[];
+      character_start_times_seconds: number[];
+      character_end_times_seconds: number[];
+    }>(),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("beats_project_id_sort_order_idx").on(table.projectId, table.sortOrder),
+  ],
+);
+
+export type Beat = typeof beats.$inferSelect;
+export type NewBeat = typeof beats.$inferInsert;
+
+// ─── Entities / Reference Bible (F-16, v4.0) ─────────────────────────
+// Recurring characters / locations / objects. Each has one multi-view
+// reference-sheet image used to condition FLUX so the entity looks
+// consistent across shots. Tagging lives on shots.referencedEntityIds.
+
+export const entities = pgTable(
+  "entities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: entityTypeEnum("type").notNull(),
+    description: text("description"),
+    referenceSheetPath: text("reference_sheet_path"),
+    referenceStatus: generationStatusEnum("reference_status").default("pending"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [index("entities_project_id_idx").on(table.projectId)],
+);
+
+export type Entity = typeof entities.$inferSelect;
+export type NewEntity = typeof entities.$inferInsert;
