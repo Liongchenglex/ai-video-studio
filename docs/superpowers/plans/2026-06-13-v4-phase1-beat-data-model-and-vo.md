@@ -40,7 +40,7 @@ Legacy continuous-VO fields on `projects` and the absolute `shots.startSeconds`/
 
 Adds the two new tables and the new `shots` columns. Additive only — nothing is dropped.
 
-- [ ] **Step 1: Add the `doublePrecision` import**
+- [x] **Step 1: Add the `doublePrecision` import**
 
 In `src/lib/db/schema.ts`, update the import from `drizzle-orm/pg-core` to include `doublePrecision`:
 
@@ -59,7 +59,7 @@ import {
 } from "drizzle-orm/pg-core";
 ```
 
-- [ ] **Step 2: Add the entity-type enum**
+- [x] **Step 2: Add the entity-type enum**
 
 In `src/lib/db/schema.ts`, after the `projectStatusEnum` definition (around line 91), add:
 
@@ -71,7 +71,7 @@ export const entityTypeEnum = pgEnum("entity_type", [
 ]);
 ```
 
-- [ ] **Step 3: Add the `beats` table**
+- [x] **Step 3: Add the `beats` table**
 
 At the end of `src/lib/db/schema.ts`, append:
 
@@ -119,7 +119,7 @@ export type Beat = typeof beats.$inferSelect;
 export type NewBeat = typeof beats.$inferInsert;
 ```
 
-- [ ] **Step 4: Add the `entities` table (Reference Bible — F-16)**
+- [x] **Step 4: Add the `entities` table (Reference Bible — F-16)**
 
 Append to `src/lib/db/schema.ts`:
 
@@ -154,7 +154,7 @@ export type Entity = typeof entities.$inferSelect;
 export type NewEntity = typeof entities.$inferInsert;
 ```
 
-- [ ] **Step 5: Add the new `shots` columns**
+- [x] **Step 5: Add the new `shots` columns**
 
 In the `shots` table definition in `src/lib/db/schema.ts`, add these columns immediately after `clipDurationSeconds` (around line 204), before `createdAt`:
 
@@ -174,7 +174,7 @@ In the `shots` table definition in `src/lib/db/schema.ts`, add these columns imm
 > Note: `beats` is declared after `shots` in the file, but Drizzle resolves the
 > `references(() => beats.id, …)` thunk lazily, so forward order is fine.
 
-- [ ] **Step 6: Push the schema and verify types**
+- [x] **Step 6: Push the schema and verify types**
 
 Run: `npm run db:push`
 Expected: drizzle-kit reports creating `beats`, `entities`, the `entity_type`
@@ -183,7 +183,7 @@ enum, and altering `shots` (4 new columns). Accept the changes.
 Run: `npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/lib/db/schema.ts
@@ -199,7 +199,7 @@ git commit -m "feat(v4-p1): add beats + entities tables and beat/entity columns 
 
 Splits a project's prose `script` into beat texts at sentence/clause boundaries. Never cuts mid-sentence (so per-beat audio seams fall on natural pauses). Merges slivers shorter than a floor into the previous beat so beats aren't two-word fragments.
 
-- [ ] **Step 1: Create the segmenter**
+- [x] **Step 1: Create the segmenter**
 
 Create `src/lib/beat-segmentation.ts`:
 
@@ -258,12 +258,12 @@ export function segmentIntoBeats(script: string): string[] {
 }
 ```
 
-- [ ] **Step 2: Verify types**
+- [x] **Step 2: Verify types**
 
 Run: `npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 3: Sanity-check the output (temporary script)**
+- [x] **Step 3: Sanity-check the output (temporary script)**
 
 Create a throwaway file `scratch-seg.ts` at the repo root:
 
@@ -280,7 +280,7 @@ no beat is split mid-sentence.
 
 Delete the scratch file afterwards: `rm scratch-seg.ts`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/lib/beat-segmentation.ts
@@ -296,7 +296,7 @@ git commit -m "feat(v4-p1): add deterministic beat segmenter (sentence/clause bo
 
 Generates one beat's audio via ElevenLabs `convertWithTimestamps`, passing the neighbouring beat texts as `previousText`/`nextText` so prosody carries across the cut. Stores the clip in R2 at `projects/{projectId}/beats/{beatId}.mp3` and returns precise (fractional) duration. Mirrors the existing `src/lib/voiceover-generation.ts` (camelCase SDK fields).
 
-- [ ] **Step 1: Create the service**
+- [x] **Step 1: Create the service**
 
 Create `src/lib/beat-voiceover-generation.ts`:
 
@@ -389,14 +389,14 @@ export async function generateBeatVoiceover(
 }
 ```
 
-- [ ] **Step 2: Verify types**
+- [x] **Step 2: Verify types**
 
 Run: `npx tsc --noEmit`
 Expected: no errors. (If the SDK rejects `previousText`/`nextText`, confirm the
 installed `@elevenlabs/elevenlabs-js` version exposes them on
 `convertWithTimestamps`; they are standard text-to-speech context fields.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/lib/beat-voiceover-generation.ts
@@ -412,7 +412,7 @@ git commit -m "feat(v4-p1): add per-beat voiceover service with prosody-continui
 
 Pure functions that turn per-beat durations into absolute timeline positions, and a shot's in-beat offset into an absolute time. No I/O.
 
-- [ ] **Step 1: Create the helper**
+- [x] **Step 1: Create the helper**
 
 Create `src/lib/beat-timing.ts`:
 
@@ -469,12 +469,12 @@ export function absoluteShotTime(
 }
 ```
 
-- [ ] **Step 2: Verify types**
+- [x] **Step 2: Verify types**
 
 Run: `npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/lib/beat-timing.ts
@@ -490,7 +490,7 @@ git commit -m "feat(v4-p1): add sequential beat-timing helpers"
 
 `POST` — the directing action for narration. Segments the project's `script` into beats, replaces any existing beats, then voices each beat in order (passing neighbour text for continuity). Returns the beats with presigned audio URLs and computed offsets.
 
-- [ ] **Step 1: Create the endpoint**
+- [x] **Step 1: Create the endpoint**
 
 Create `src/app/api/projects/[id]/beats/generate/route.ts`:
 
@@ -623,7 +623,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 }
 ```
 
-- [ ] **Step 2: Verify types and lint**
+- [x] **Step 2: Verify types and lint**
 
 Run: `npx tsc --noEmit`
 Expected: no errors.
@@ -631,7 +631,7 @@ Expected: no errors.
 Run: `npm run lint`
 Expected: no errors for the new file.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/app/api/projects/[id]/beats/generate/route.ts
@@ -648,7 +648,7 @@ git commit -m "feat(v4-p1): add POST /beats/generate — segment script + voice 
 
 `GET /beats` returns beats with presigned URLs + offsets (for the editor to load). `POST /beats/[beatId]/revoice` regenerates one beat's audio (with neighbour context) — the "fix one flat line" path.
 
-- [ ] **Step 1: Create the list endpoint**
+- [x] **Step 1: Create the list endpoint**
 
 Create `src/app/api/projects/[id]/beats/route.ts`:
 
@@ -711,7 +711,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 }
 ```
 
-- [ ] **Step 2: Create the re-voice endpoint**
+- [x] **Step 2: Create the re-voice endpoint**
 
 Create `src/app/api/projects/[id]/beats/[beatId]/revoice/route.ts`:
 
@@ -809,7 +809,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 }
 ```
 
-- [ ] **Step 3: Verify types and lint**
+- [x] **Step 3: Verify types and lint**
 
 Run: `npx tsc --noEmit`
 Expected: no errors.
@@ -817,7 +817,7 @@ Expected: no errors.
 Run: `npm run lint`
 Expected: no errors for the new files.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add "src/app/api/projects/[id]/beats/route.ts" "src/app/api/projects/[id]/beats/[beatId]/revoice/route.ts"
@@ -830,12 +830,12 @@ git commit -m "feat(v4-p1): add GET /beats and POST /beats/[beatId]/revoice"
 
 No new code — exercises the foundation and migrates existing projects' scripts into beats. (The generate endpoint *is* the backfill: it segments the existing `script` and voices it.)
 
-- [ ] **Step 1: Start the dev server**
+- [x] **Step 1: Start the dev server**
 
 Run: `npm run dev`
 Confirm it boots with no type errors.
 
-- [ ] **Step 2: Generate beats for a project that already has a script + voice**
+- [x] **Step 2: Generate beats for a project that already has a script + voice**
 
 In the browser, sign in and open an existing project that has a `script` and a
 `voiceId`. Copy its project id from the URL. Then, from the browser devtools
@@ -855,14 +855,14 @@ Expected: a JSON `{ beats: [...] }` array. Verify:
 - `startSeconds`/`endSeconds` increase monotonically and are contiguous
   (each beat's `startSeconds` equals the previous beat's `endSeconds`).
 
-- [ ] **Step 3: Listen to two consecutive beats for seam quality**
+- [x] **Step 3: Listen to two consecutive beats for seam quality**
 
 Open two consecutive `voUrl`s and play them back-to-back. Confirm the prosody
 carries across the boundary (no jarring reset). If a seam is harsh, note the
 beat — it usually means the segmenter cut at a weak boundary; revisit
 `MIN_BEAT_CHARS` or the boundary regex in `beat-segmentation.ts`.
 
-- [ ] **Step 4: Re-voice a single beat**
+- [x] **Step 4: Re-voice a single beat**
 
 Pick a `beatId` from Step 2 and run in the console:
 
@@ -876,13 +876,13 @@ await fetch(`/api/projects/${PROJECT_ID}/beats/${BEAT_ID}/revoice`, {
 Expected: the single beat returns `voStatus: "done"` with a fresh `voUrl`; other
 beats are untouched.
 
-- [ ] **Step 5: Backfill the rest**
+- [x] **Step 5: Backfill the rest**
 
 Repeat Step 2 for each remaining existing project that has a script. (There is
 no shared multi-project endpoint by design — backfill is per project and
 explicit, so you can spot-check each.)
 
-- [ ] **Step 6: Final verification commit (docs only, if anything was tuned)**
+- [x] **Step 6: Final verification commit (docs only, if anything was tuned)**
 
 If Step 3 led you to tune `beat-segmentation.ts`, commit that:
 
