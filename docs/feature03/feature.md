@@ -1,5 +1,22 @@
 # Feature: F-03 Script Generation (v3.0 — plain text)
 
+> **⚠ PLANNED v4.0 EVOLUTION — design approved 2026-06-13.**
+> The sections below document the **current v3.0 implementation** and remain
+> accurate for the code on disk. A redesign is specced but **not yet built**:
+> see
+> [`docs/superpowers/specs/2026-06-13-unified-directing-editor-design.md`](../superpowers/specs/2026-06-13-unified-directing-editor-design.md).
+> Headline changes — update this doc when they land:
+> - **The separate Script step disappears.** Generation stays in first-run
+>   setup (style + brief → script), but editing moves inline into the unified
+>   editor — no more `step-script.tsx` textarea screen or Script → Editor
+>   stepper hop.
+> - **Beats replace whole-script editing.** The script is segmented into
+>   `beats` rows; editing one beat's text re-voices only that beat (the beat
+>   data model + segmentation shipped in v4.0 Phase 1).
+> - **Cast & Locations tie-in.** The Reference Bible (F-16) auto-extracts
+>   recurring characters/locations/objects from the generated script — see
+>   [`docs/feature16/feature.md`](../feature16/feature.md).
+
 ## Feature
 - **Name:** Script Generation
 - **Purpose:** Generate a full narrated script from the user's brief as

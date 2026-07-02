@@ -1,6 +1,6 @@
 # AI Video Studio
 
-A web application that lets solo creators produce high-quality YouTube videos using a fully AI-powered pipeline. Define a style, generate a script, and the app orchestrates every production step — delivering a ready-to-publish video with minimal manual effort.
+A web-based **AI-assisted video editor** for solo YouTube creators. Define a visual style, generate a script, then direct the video on a timeline — placing AI-generated images and animated clips over an ElevenLabs voiceover, shot by shot. It is deliberately not a one-click "prompt → finished video" tool: humans pick the beats, AI makes the pixels. See [`product-requirement.md`](product-requirement.md) for the full product spec and the v4.0 unified-editor direction (including the Cast & Locations / Reference Bible feature).
 
 ## Prerequisites
 
