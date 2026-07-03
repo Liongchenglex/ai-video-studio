@@ -14,7 +14,7 @@ export function useBeatPlayback(beats: EditorBeat[]) {
   const [playing, setPlaying] = useState(false);
   const [playheadSeconds, setPlayheadSeconds] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const beatIndexRef = useRef(0);
+  const preloadRef = useRef<HTMLAudioElement | null>(null);
   const beatsRef = useRef(beats);
   beatsRef.current = beats;
 
@@ -26,29 +26,33 @@ export function useBeatPlayback(beats: EditorBeat[]) {
   const playBeat = useCallback(
     (index: number, offsetInBeat: number) => {
       const list = beatsRef.current;
-      const beat = list[index];
-      if (!beat) {
+      // Unvoiced beats: skip forward.
+      let i = index;
+      let offset = offsetInBeat;
+      while (list[i] && !list[i].voUrl) {
+        i += 1;
+        offset = 0;
+      }
+      const beat = list[i];
+      if (!beat || !beat.voUrl) {
         setPlaying(false);
         return;
       }
-      if (!beat.voUrl) {
-        // Unvoiced beat: skip forward.
-        playBeat(index + 1, 0);
-        return;
-      }
       stopAudio();
-      beatIndexRef.current = index;
       const a = new Audio(beat.voUrl);
       audioRef.current = a;
-      a.currentTime = offsetInBeat;
+      a.currentTime = offset;
       a.ontimeupdate = () => setPlayheadSeconds(beat.startSeconds + a.currentTime);
-      a.onended = () => playBeat(index + 1, 0);
+      a.onended = () => playBeat(i + 1, 0);
+      a.onerror = () => playBeat(i + 1, 0);
       a.play().catch(() => setPlaying(false));
       // Preload the next beat's audio for a tight seam.
-      const next = list[index + 1];
+      const next = list[i + 1];
       if (next?.voUrl) {
-        const pre = new Audio(next.voUrl);
-        pre.preload = "auto";
+        preloadRef.current = new Audio(next.voUrl);
+        preloadRef.current.preload = "auto";
+      } else {
+        preloadRef.current = null;
       }
     },
     [stopAudio],
