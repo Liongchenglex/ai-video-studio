@@ -55,15 +55,45 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (idx === -1) return notFoundResponse();
 
   const beat = rows[idx];
+
+  // Optional body: { text } — edit the beat's words, then re-voice.
+  // An empty/absent body means "re-voice the existing text".
+  let newText: string | undefined;
+  const raw = await request.text();
+  if (raw) {
+    try {
+      const body = JSON.parse(raw) as { text?: unknown };
+      if (body.text !== undefined) {
+        if (typeof body.text !== "string") {
+          return badRequestResponse("text must be a string");
+        }
+        const trimmed = body.text.trim();
+        if (trimmed.length === 0) {
+          return badRequestResponse("text cannot be empty");
+        }
+        if (trimmed.length > 2000) {
+          return badRequestResponse("text too long (max 2000 characters)");
+        }
+        newText = trimmed;
+      }
+    } catch {
+      return badRequestResponse("Invalid request body");
+    }
+  }
+
+  const effectiveText = newText ?? beat.text;
   const voiceId = project.voiceId || "21m00Tcm4TlvDq8ikWAM";
 
-  await db.update(beats).set({ voStatus: "generating" }).where(eq(beats.id, beatId));
+  await db
+    .update(beats)
+    .set({ voStatus: "generating", ...(newText ? { text: newText } : {}) })
+    .where(eq(beats.id, beatId));
 
   try {
     const result = await generateBeatVoiceover({
       projectId: id,
       beatId,
-      text: beat.text,
+      text: effectiveText,
       voiceId,
       previousText: rows[idx - 1]?.text,
       nextText: rows[idx + 1]?.text,
