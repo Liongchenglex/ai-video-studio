@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEditor, beatColor } from "@/components/editor/editor-store";
 
@@ -14,6 +14,22 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
   const { beats, selection, select, revoiceBeat } = useEditor();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // The strip is a fixed-height band (the full script would push the
+  // timeline below the fold), so keep the selected beat's sentence in view
+  // by scrolling the band — never the page — when selection changes.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const selectedBeatId = selection?.type === "beat" ? selection.beatId : null;
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container || !selectedBeatId) return;
+    const el = container.querySelector<HTMLElement>(`[data-beat-id="${selectedBeatId}"]`);
+    if (!el) return;
+    const er = el.getBoundingClientRect();
+    const cr = container.getBoundingClientRect();
+    if (er.top < cr.top || er.bottom > cr.bottom) {
+      container.scrollTop += er.top - cr.top - cr.height / 2 + er.height / 2;
+    }
+  }, [selectedBeatId]);
   // Guards against double-commit: pressing Enter (or Escape) calls commit()
   // or setEditingId(null) directly, which unmounts the textarea and fires
   // its onBlur. Setting this flag beforehand tells onBlur to no-op instead
@@ -36,7 +52,8 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
       <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         Script — edit in place, re-voices only the beat you touch
       </p>
-      <p>
+      <div ref={scrollRef} className="max-h-[6.5rem] overflow-y-auto pr-1">
+        <p>
         {beats.map((beat, i) =>
           editingId === beat.id ? (
             <textarea
@@ -70,6 +87,7 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
           ) : (
             <span
               key={beat.id}
+              data-beat-id={beat.id}
               onClick={() => {
                 select({ type: "beat", beatId: beat.id });
                 onSeek(beat.startSeconds);
@@ -97,7 +115,8 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
             </span>
           ),
         )}
-      </p>
+        </p>
+      </div>
     </div>
   );
 }

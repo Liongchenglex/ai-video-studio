@@ -2,12 +2,13 @@
  * Storyboard card view (v4.0 Pillar B, mockup 02).
  *
  * Renders one card per shot in a responsive grid, ordered by
- * (beat.sortOrder, startInBeat). Each card surfaces the shot's thumbnail
- * (clip loop > image > placeholder), a rolled-up generation status, the
- * visual prompt, the parent beat's narration line, and the same
- * generate/retry actions as the timeline inspector — this is a second
- * renderer over the identical `useEditor()` state, not a parallel data
- * model (spec §5).
+ * (beat.sortOrder, startInBeat). Each card surfaces the shot's static
+ * frame (image > placeholder — clips play in the timeline preview and
+ * inspector, not here; the board is for scanning, per mockup 02), a
+ * rolled-up generation status, the visual prompt, the parent beat's
+ * narration line, and the same generate/retry actions as the timeline
+ * inspector — this is a second renderer over the identical `useEditor()`
+ * state, not a parallel data model (spec §5).
  */
 "use client";
 
@@ -90,18 +91,10 @@ function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; i
       className={`cursor-pointer gap-0 p-0 ${isSelected ? "ring-2 ring-primary" : ""}`}
       onClick={() => select({ type: "shot", shotId: shot.id })}
     >
-      {/* Thumbnail band */}
+      {/* Thumbnail band — always the static frame; clips play in the
+          timeline preview / inspector, keeping the board scannable */}
       <div className="relative aspect-video bg-muted">
-        {shot.clipUrl ? (
-          <video
-            src={shot.clipUrl}
-            className="absolute inset-0 h-full w-full object-cover"
-            autoPlay
-            loop
-            muted
-            playsInline
-          />
-        ) : shot.imageUrl ? (
+        {shot.imageUrl ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img src={shot.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
         ) : (
