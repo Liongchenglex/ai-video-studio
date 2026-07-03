@@ -458,6 +458,39 @@ Global Constraints) and remain open:
 
 ---
 
+### 19. v4.0 Phase 2 final-review follow-ups
+
+**Status:** Logged 2026-07-03 from the Phase 2 (unified editor) final review.
+None of these block the Phase 2 ship; the Cmd/Ctrl+S split-hijack bug found
+in the same review was fixed directly (see `timeline-view.tsx` keydown
+handler). Remaining items to pick up:
+
+- Split right-half should inherit `imageUrl`/`clipUrl` client-side in
+  `editor-store` `splitShot` (server already copies asset paths; client
+  nulls them until reload); align `docs/feature08/testcase-v4-phase2.md`
+  TC-4.3 wording.
+- Reword two stale error strings referencing the removed `adopt-beats`
+  endpoint (`src/app/api/projects/[id]/shots/[shotId]/route.ts` and
+  `.../split/route.ts`: "run adopt-beats first").
+- Enforce `MIN_SHOT_SECONDS` on recommend-inserted fragments (sub-0.25s
+  beats can yield sub-minimum shots).
+- Wrap recommend's delete-then-insert in a DB transaction (failed insert
+  after delete loses shots).
+- Clear superseded Audio `onended`/`onerror` handlers in
+  `use-beat-playback` `stopAudio` (late-firing handler could advance with
+  stale index).
+- Surface `voStatus` "failed" client-side after a failed revoice instead
+  of reverting to the prior status.
+- Add a DB-level overlap constraint for shots within a beat (TOCTOU race
+  in the app-level check).
+- Docs sweep: feature16 "editor-prototype successor" phrasing; roadmap
+  line "Phases 2–4 are deliberately not written yet"; delete pre-existing
+  dead `src/lib/scene-utils.ts`.
+
+**Tag:** editor, vo, bug, docs — deferred, not blocking.
+
+---
+
 ## Ops / Dev UX
 
 ### 12. HMR warning on dep-array changes during hot reload

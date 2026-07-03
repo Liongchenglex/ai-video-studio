@@ -221,6 +221,7 @@ export function TimelineView({
   // ── Keyboard: S splits at playhead, Del deletes ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey) return; // don't hijack Cmd/Ctrl+S (browser save) etc.
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
       if (selection?.type !== "shot") return;
