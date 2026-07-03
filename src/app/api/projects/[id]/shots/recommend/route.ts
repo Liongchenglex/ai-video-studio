@@ -1,13 +1,14 @@
 /**
  * POST /api/projects/[id]/shots/recommend
- * AI-suggests a shot breakdown for the project's VO. Calls Claude with
- * the full script, receives ~6-8 second shots with image + motion prompts,
- * replaces any existing shots for this project, returns the new list.
+ * AI-suggests a shot breakdown per beat. Calls Claude with the full script
+ * for context, receives one image prompt per fragment (fragments computed
+ * deterministically within each voiced beat), replaces any existing shots
+ * for this project, returns the new list.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, shots } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { projects, shots, beats } from "@/lib/db/schema";
+import { eq, and, asc } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -17,7 +18,7 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
-import { recommendShots } from "@/lib/shot-recommendation";
+import { recommendShotsForBeats } from "@/lib/shot-recommendation";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -42,14 +43,23 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   if (!project || project.deletedAt) return notFoundResponse();
 
-  if (!project.script || !project.durationSeconds) {
-    return badRequestResponse("Generate script and voiceover before recommending shots");
+  const beatRows = await db
+    .select()
+    .from(beats)
+    .where(eq(beats.projectId, id))
+    .orderBy(asc(beats.sortOrder));
+  const voiced = beatRows.filter((b) => b.voStatus === "done" && b.voDurationSeconds);
+  if (voiced.length === 0) {
+    return badRequestResponse("Voice the script into beats before recommending shots");
   }
 
   try {
-    const recommended = await recommendShots({
-      script: project.script,
-      totalDurationSeconds: project.durationSeconds,
+    const recommended = await recommendShotsForBeats({
+      beats: voiced.map((b) => ({
+        id: b.id,
+        text: b.text,
+        voDurationSeconds: b.voDurationSeconds,
+      })),
       styleString: project.styleString,
     });
 
@@ -58,10 +68,10 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const rows = recommended.map((r, i) => ({
       projectId: id,
+      beatId: r.beatId,
       sortOrder: i,
-      startSeconds: r.startSeconds,
-      endSeconds: r.endSeconds,
-      text: r.text,
+      startInBeat: r.startInBeat,
+      endInBeat: r.endInBeat,
       imagePrompt: r.imagePrompt,
       motionPrompt: r.motionPrompt,
     }));

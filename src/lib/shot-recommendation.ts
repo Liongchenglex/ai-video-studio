@@ -1,14 +1,18 @@
 /**
- * Shot recommendation (Iter 1 AI-suggest, revised).
+ * Shot recommendation (v4.0 per-beat model).
  *
- * Two-stage architecture:
- *   1. Server-side deterministic text split — walks the script, cuts at
- *      sentence/semicolon/em-dash/comma boundaries to keep every fragment
- *      under the per-shot char budget (8s at the VO's measured char/sec rate).
- *      No AI, no hallucination risk.
- *   2. Claude generates ONE image prompt per fragment. Output is a flat
- *      array of strings matching the fragments order — much cheaper and
- *      faster than the prior "Claude outputs text + prompts" approach.
+ * Shots are recommended per beat rather than against the whole script:
+ *   1. Each voiced beat is fragmented deterministically — walks the beat's
+ *      text, cuts at sentence/semicolon/em-dash/comma boundaries to keep
+ *      every fragment under the per-shot char budget (derived from that
+ *      beat's own measured char/sec rate). No AI, no hallucination risk.
+ *      Fragment offsets are proportional character positions WITHIN the
+ *      beat's duration (startInBeat/endInBeat), never absolute timeline
+ *      seconds.
+ *   2. Claude generates ONE image prompt per fragment across all beats in a
+ *      single call. Output is a flat array of strings matching the
+ *      fragments order — much cheaper and faster than the prior "Claude
+ *      outputs text + prompts" approach.
  *
  * Motion prompts default to a generic camera move and are intended to be
  * replaced (or AI-suggested on demand) at clip generation time.
@@ -24,20 +28,6 @@ const MAX_SHOT_SECONDS = 8;
 // writing a subject-action-first prompt before generating the clip.
 const DEFAULT_MOTION_PROMPT =
   "the subject holds its pose while the scene breathes — faint ambient motion, minimal camera drift";
-
-export interface RecommendedShot {
-  startSeconds: number;
-  endSeconds: number;
-  text: string;
-  imagePrompt: string;
-  motionPrompt: string;
-}
-
-interface Input {
-  script: string;
-  totalDurationSeconds: number;
-  styleString?: string | null;
-}
 
 // ─── Stage 1: deterministic text split ────────────────────────────────────
 
@@ -150,104 +140,103 @@ ${script}
 Call save_image_prompts with your array.`;
 }
 
-// ─── Timing: proportional char-to-second distribution ─────────────────────
-
-function assignTimings(
-  fragments: string[],
-  totalDurationSeconds: number,
-  fullScript: string,
-): Array<{ startSeconds: number; endSeconds: number }> {
-  const totalChars = fullScript.length;
-  const secondsPerChar = totalDurationSeconds / totalChars;
-  const results: Array<{ startSeconds: number; endSeconds: number }> = [];
-
-  let charCursor = 0;
-  for (const frag of fragments) {
-    const startChar = charCursor;
-    // Advance to just past this fragment (account for trimmed whitespace at joins)
-    const pos = fullScript.indexOf(frag, charCursor);
-    const actualStart = pos >= 0 ? pos : startChar;
-    const actualEnd = actualStart + frag.length;
-    charCursor = actualEnd;
-    results.push({
-      startSeconds: Math.round(actualStart * secondsPerChar),
-      endSeconds: Math.round(actualEnd * secondsPerChar),
-    });
-  }
-  return results;
-}
-
 // ─── Public entry point ──────────────────────────────────────────────────
 
-export async function recommendShots(input: Input): Promise<RecommendedShot[]> {
-  const charsPerSecond = input.script.length / Math.max(1, input.totalDurationSeconds);
-  const maxCharsPerShot = Math.floor(charsPerSecond * MAX_SHOT_SECONDS);
+export interface BeatRecommendedShot {
+  beatId: string;
+  startInBeat: number;
+  endInBeat: number;
+  imagePrompt: string;
+  motionPrompt: string;
+}
 
-  // 1. Split the script deterministically.
-  const fragments = splitScriptDeterministic(input.script, maxCharsPerShot);
-  console.log(
-    `[shot-recommend] split ${input.script.length} chars into ${fragments.length} fragments (${charsPerSecond.toFixed(2)} chars/s, ${maxCharsPerShot}-char cap)`,
-  );
+interface BeatsInput {
+  beats: Array<{ id: string; text: string; voDurationSeconds: number | null }>;
+  styleString?: string | null;
+}
 
-  if (fragments.length === 0) {
-    throw new Error("Script split produced no fragments");
+/**
+ * v4.0 recommendation: fragments are computed per beat (a beat longer than
+ * MAX_SHOT_SECONDS is split into ~equal sub-shots at punctuation), offsets
+ * are proportional to character position within the beat, and Claude
+ * writes one image prompt per fragment exactly as before.
+ */
+export async function recommendShotsForBeats(
+  input: BeatsInput,
+): Promise<BeatRecommendedShot[]> {
+  // 1. Deterministic per-beat fragmenting.
+  const placed: Array<{ beatId: string; startInBeat: number; endInBeat: number; text: string }> = [];
+  for (const beat of input.beats) {
+    const dur = beat.voDurationSeconds ?? 0;
+    if (dur <= 0 || beat.text.trim().length === 0) continue;
+    const charsPerSecond = beat.text.length / dur;
+    const maxChars = Math.max(20, Math.floor(charsPerSecond * MAX_SHOT_SECONDS));
+    const fragments = splitScriptDeterministic(beat.text, maxChars);
+    let charCursor = 0;
+    for (const frag of fragments) {
+      const pos = beat.text.indexOf(frag, charCursor);
+      const startChar = pos >= 0 ? pos : charCursor;
+      const endChar = startChar + frag.length;
+      charCursor = endChar;
+      placed.push({
+        beatId: beat.id,
+        startInBeat: (startChar / beat.text.length) * dur,
+        endInBeat: (endChar / beat.text.length) * dur,
+        text: frag,
+      });
+    }
   }
+  if (placed.length === 0) throw new Error("No voiced beats to recommend shots for");
 
-  // 2. Ask Claude for one image prompt per fragment.
+  // 2. One image prompt per fragment (unchanged Claude call).
+  const fullScript = input.beats.map((b) => b.text).join(" ");
+  const fragmentTexts = placed.map((p) => p.text);
   const tStart = Date.now();
   const stream = anthropic.messages.stream({
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 16000,
-    system: buildSystemPrompt(input.script, input.styleString),
+    system: buildSystemPrompt(fullScript, input.styleString),
     tools: [PROMPTS_TOOL],
     tool_choice: { type: "tool", name: "save_image_prompts" },
     messages: [
       {
         role: "user",
-        content: `Here are ${fragments.length} voiceover fragments. Return an array of ${fragments.length} image prompts in the same order.\n\n${JSON.stringify(fragments, null, 2)}`,
+        content: `Here are ${fragmentTexts.length} voiceover fragments. Return an array of ${fragmentTexts.length} image prompts in the same order.\n\n${JSON.stringify(fragmentTexts, null, 2)}`,
       },
     ],
   });
   const response = await stream.finalMessage();
-  const elapsed = ((Date.now() - tStart) / 1000).toFixed(1);
   console.log(
-    `[shot-recommend] Claude returned | stop=${response.stop_reason} | ${elapsed}s | in=${response.usage.input_tokens} out=${response.usage.output_tokens}`,
+    `[shot-recommend] Claude returned | stop=${response.stop_reason} | ${((Date.now() - tStart) / 1000).toFixed(1)}s | in=${response.usage.input_tokens} out=${response.usage.output_tokens}`,
   );
-
   if (response.stop_reason === "max_tokens") {
     throw new Error("Claude hit max_tokens generating image prompts — very long script.");
   }
-
   const saveToolUse = response.content.find(
     (b) => b.type === "tool_use" && b.name === "save_image_prompts",
   );
   if (!saveToolUse || saveToolUse.type !== "tool_use") {
     throw new Error("Claude didn't call save_image_prompts");
   }
-
   const { image_prompts: rawPrompts } = saveToolUse.input as { image_prompts: string[] };
-
-  // Reconcile count — fall back to a generic prompt if Claude returned the wrong number.
-  const imagePrompts: string[] = fragments.map((frag, i) => {
-    const p = rawPrompts?.[i];
-    if (typeof p === "string" && p.trim().length > 0) return p;
-    return `A cinematic still capturing the moment: ${frag.slice(0, 80)}`;
-  });
-
-  if (!rawPrompts || rawPrompts.length !== fragments.length) {
+  if (!rawPrompts || rawPrompts.length !== fragmentTexts.length) {
     console.warn(
-      `[shot-recommend] prompt count mismatch — got ${rawPrompts?.length ?? 0}, expected ${fragments.length}. Using fallback for missing.`,
+      `[shot-recommend] prompt count mismatch — got ${rawPrompts?.length ?? 0}, expected ${fragmentTexts.length}. Using fallback for missing.`,
     );
   }
 
-  // 3. Assign timings and assemble.
-  const timings = assignTimings(fragments, input.totalDurationSeconds, input.script);
-
-  return fragments.map((frag, i) => ({
-    startSeconds: timings[i].startSeconds,
-    endSeconds: timings[i].endSeconds,
-    text: frag,
-    imagePrompt: imagePrompts[i],
-    motionPrompt: DEFAULT_MOTION_PROMPT,
-  }));
+  return placed.map((p, i) => {
+    const raw = rawPrompts?.[i];
+    const imagePrompt =
+      typeof raw === "string" && raw.trim().length > 0
+        ? raw
+        : `A cinematic still capturing the moment: ${p.text.slice(0, 80)}`;
+    return {
+      beatId: p.beatId,
+      startInBeat: p.startInBeat,
+      endInBeat: p.endInBeat,
+      imagePrompt,
+      motionPrompt: DEFAULT_MOTION_PROMPT,
+    };
+  });
 }
