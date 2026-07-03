@@ -310,8 +310,10 @@ function EditorShell({
     const localTime = Math.max(0, playheadSeconds - (range?.start ?? 0));
     if (Math.abs(v.currentTime - localTime) > 0.5) v.currentTime = localTime;
     if (playing) v.play().catch(() => {});
+    // `view` is a dependency because the <video> element unmounts in the
+    // storyboard view — returning to the timeline must re-sync the source.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playheadShot?.id, playheadShot?.clipUrl]);
+  }, [playheadShot?.id, playheadShot?.clipUrl, view]);
 
   // Sync the video element when play/pause toggles.
   useEffect(() => {
@@ -354,35 +356,41 @@ function EditorShell({
       <div className="flex gap-4">
         <LeftRail />
 
-        {/* Center column */}
+        {/* Center column. The video preview and script band belong to the
+            timeline (directing) view; the storyboard is a scan-only board
+            (mockup 02) — toggle to it and the cards ARE the screen. */}
         <div className="min-w-0 flex-1 space-y-3">
-          <div
-            className="relative mx-auto aspect-video overflow-hidden rounded bg-black"
-            style={{ maxHeight: "45vh" }}
-          >
-            <video ref={previewVideoRef} muted playsInline className="h-full w-full object-contain" />
-            {!playheadShot?.clipUrl && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center text-xs text-white/60">
-                {playheadShot
-                  ? playheadShot.imageUrl
-                    ? "Clip not generated yet — showing image only"
-                    : "No clip here"
-                  : playheadSeconds > 0
-                    ? "Gap — no shot at this time"
-                    : "Press Play to preview"}
+          {view === "timeline" && (
+            <>
+              <div
+                className="relative mx-auto aspect-video overflow-hidden rounded bg-black"
+                style={{ maxHeight: "45vh" }}
+              >
+                <video ref={previewVideoRef} muted playsInline className="h-full w-full object-contain" />
+                {!playheadShot?.clipUrl && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center text-xs text-white/60">
+                    {playheadShot
+                      ? playheadShot.imageUrl
+                        ? "Clip not generated yet — showing image only"
+                        : "No clip here"
+                      : playheadSeconds > 0
+                        ? "Gap — no shot at this time"
+                        : "Press Play to preview"}
+                  </div>
+                )}
+                {playheadShot?.imageUrl && !playheadShot.clipUrl && (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={playheadShot.imageUrl}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-contain opacity-80"
+                  />
+                )}
               </div>
-            )}
-            {playheadShot?.imageUrl && !playheadShot.clipUrl && (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={playheadShot.imageUrl}
-                alt=""
-                className="absolute inset-0 h-full w-full object-contain opacity-80"
-              />
-            )}
-          </div>
 
-          <ScriptStrip onSeek={onSeek} />
+              <ScriptStrip onSeek={onSeek} />
+            </>
+          )}
 
           <Card>
             <CardContent className="p-3">
