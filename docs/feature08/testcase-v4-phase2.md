@@ -276,6 +276,37 @@ column per section.
 
 ---
 
+
+## 9. Cross-Beat Shots (anchor-beat spillover, added 2026-07-03)
+
+Shots may span beat boundaries: `beatId` is the anchor (the beat containing
+the shot's start); `endInBeat` may exceed the anchor's duration.
+
+- **TC-9.1 — Spanning create.** `POST /shots` with `endInBeat` past the
+  anchor's end (but within the timeline) → **201**; absolute range =
+  anchor start + offsets. *Verified live 2026-07-03 (beats 18→19).*
+- **TC-9.2 — Anchor invariant.** `startInBeat ≥` anchor duration → **400**
+  (the shot must start inside its anchor). *Verified live.*
+- **TC-9.3 — Global overlap.** A new shot in a spanned beat that collides
+  with a spanning shot anchored elsewhere → **400** ("Shot overlaps an
+  existing shot") — overlap is checked in absolute time across ALL shots,
+  not per beat. *Verified live.*
+- **TC-9.4 — Split re-anchors.** Splitting a spanning shot at an offset past
+  the anchor's end → right half's `beatId` becomes the beat containing the
+  split point; both halves' absolute positions are preserved. *Verified
+  live (right half re-anchored, offsets exact to 1e-9).*
+- **TC-9.5 — PATCH re-anchor.** `PATCH /shots/:id` accepts an optional
+  `beatId` (validated to belong to the project) so a drag that moves the
+  start across a boundary re-anchors; same anchor invariant + global
+  overlap rules. *Verified live.*
+- **TC-9.6 — Continuous gap picking.** Clicking empty timeline space picks
+  the gap from the previous shot's end to the next shot's start across
+  beat boundaries; the badge reads "beats N–M". *Verified live ("218.7–222.7s
+  · beats 18–19").*
+- **TC-9.7 — Spanned narration.** Inspector "VO (narration)" and storyboard
+  SCRIPT (NARRATION) show the joined text of every beat the shot overlaps;
+  meta labels read "Beat N" or "Beats N–M".
+
 ## Summary
 
 All 8 sections above were verified live via browser e2e and/or curl against

@@ -2,13 +2,14 @@
  * PATCH  /api/projects/[id]/shots/[shotId] — update bounds and/or prompts
  * DELETE /api/projects/[id]/shots/[shotId] — remove a shot
  *
- * PATCH validates overlaps against other shots in the same beat when
- * bounds change (v4.0 beat-relative model).
+ * PATCH validates bounds against the anchor-beat spillover model: the shot
+ * must start inside its (possibly re-anchored) beat, may spill past it, and
+ * must not overlap any other shot on the timeline (absolute ranges).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, shots, beats } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -18,7 +19,8 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
-import { MIN_SHOT_SECONDS } from "@/lib/shot-beat-mapping";
+import { MIN_SHOT_SECONDS, shotAbsoluteRange } from "@/lib/shot-beat-mapping";
+import { computeBeatOffsets, totalDurationSeconds } from "@/lib/beat-timing";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
 
@@ -55,6 +57,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (!project || !shot) return notFoundResponse();
 
   let body: Partial<{
+    beatId: string;
     startInBeat: number;
     endInBeat: number;
     imagePrompt: string;
@@ -68,44 +71,61 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const updates: Record<string, unknown> = {};
   const boundsChanged =
-    body.startInBeat !== undefined || body.endInBeat !== undefined;
+    body.beatId !== undefined ||
+    body.startInBeat !== undefined ||
+    body.endInBeat !== undefined;
 
   if (boundsChanged) {
-    if (!shot.beatId) return badRequestResponse("Shot has no beat — run adopt-beats first");
-    const [beat] = await db
+    // A bounds change may re-anchor the shot: dragging its start into a
+    // different beat sends the new anchor's beatId along with the offsets.
+    if (body.beatId !== undefined && (typeof body.beatId !== "string" || !isValidUUID(body.beatId))) {
+      return badRequestResponse("Invalid beatId");
+    }
+    const anchorId = body.beatId ?? shot.beatId;
+    if (!anchorId) return badRequestResponse("Shot has no anchor beat");
+
+    const beatRows = await db
       .select()
       .from(beats)
-      .where(and(eq(beats.id, shot.beatId), eq(beats.projectId, id)))
-      .limit(1);
-    if (!beat) return notFoundResponse();
+      .where(eq(beats.projectId, id))
+      .orderBy(asc(beats.sortOrder));
+    const offsets = computeBeatOffsets(beatRows);
+    const anchor = offsets.find((o) => o.id === anchorId);
+    // Cross-table authorization: the anchor must belong to this project.
+    if (!anchor) return badRequestResponse("beatId does not belong to this project");
 
-    const beatDur = beat.voDurationSeconds ?? 0;
+    const anchorDur = anchor.endSeconds - anchor.startSeconds;
+    const timelineEnd = totalDurationSeconds(beatRows);
     const newStart = body.startInBeat ?? shot.startInBeat ?? 0;
-    const newEnd = body.endInBeat ?? shot.endInBeat ?? beatDur;
+    const newEnd = body.endInBeat ?? shot.endInBeat ?? anchorDur;
     if (
       !Number.isFinite(newStart) ||
       !Number.isFinite(newEnd) ||
       newStart < 0 ||
+      newStart >= anchorDur || // the shot must START inside its anchor
       newEnd - newStart < MIN_SHOT_SECONDS ||
-      newEnd > beatDur + 0.05
+      anchor.startSeconds + newEnd > timelineEnd + 0.05
     ) {
       return badRequestResponse("Invalid bounds for this beat");
     }
 
-    const siblings = await db
+    // Overlap check against every other shot on the timeline (absolute
+    // ranges) — shots can span beats.
+    const offsetById = new Map(offsets.map((o) => [o.id, o]));
+    const absStart = anchor.startSeconds + newStart;
+    const absEnd = anchor.startSeconds + newEnd;
+    const others = await db
       .select()
       .from(shots)
-      .where(and(eq(shots.projectId, id), eq(shots.beatId, shot.beatId)));
-    const overlap = siblings.find(
-      (s) =>
-        s.id !== shotId &&
-        s.startInBeat != null &&
-        s.endInBeat != null &&
-        s.startInBeat < newEnd &&
-        s.endInBeat > newStart,
-    );
-    if (overlap) return badRequestResponse("Bounds overlap another shot in this beat");
+      .where(eq(shots.projectId, id));
+    const overlap = others.find((s) => {
+      if (s.id === shotId) return false;
+      const r = shotAbsoluteRange(s, offsetById);
+      return r !== null && r.start < absEnd && r.end > absStart;
+    });
+    if (overlap) return badRequestResponse("Bounds overlap another shot");
 
+    updates.beatId = anchorId;
     updates.startInBeat = newStart;
     updates.endInBeat = newEnd;
   }

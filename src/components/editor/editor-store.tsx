@@ -144,7 +144,7 @@ interface EditorContextValue {
   ): Promise<void>;
   updateShot(
     shotId: string,
-    patch: Partial<Pick<EditorShot, "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
+    patch: Partial<Pick<EditorShot, "beatId" | "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
   ): Promise<void>;
   deleteShot(shotId: string): Promise<void>;
   splitShot(shotId: string, atInBeat: number): Promise<void>;
@@ -243,7 +243,7 @@ export function EditorProvider(props: {
   const updateShot = useCallback(
     async (
       shotId: string,
-      patch: Partial<Pick<EditorShot, "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
+      patch: Partial<Pick<EditorShot, "beatId" | "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
     ) => {
       const prevShot = state.shots.find((s) => s.id === shotId);
       dispatch({ type: "patchShot", shotId, patch });
@@ -459,4 +459,22 @@ export function absoluteShotRange(
   const beat = beats.find((b) => b.id === shot.beatId);
   if (!beat) return null;
   return { start: beat.startSeconds + shot.startInBeat, end: beat.startSeconds + shot.endInBeat };
+}
+
+/**
+ * Every beat a shot's time range overlaps, in order. Shots may span beat
+ * boundaries (anchor-beat spillover), so narration display concatenates
+ * these beats' text and labels read "beat N" or "beats N–M".
+ */
+export function beatsSpanned(shot: EditorShot, beats: EditorBeat[]): EditorBeat[] {
+  const range = absoluteShotRange(shot, beats);
+  if (!range) return [];
+  // Zero-duration beats (unvoiced) carry no narration — skip them so they
+  // never pad the joined text or widen the "beats N–M" label.
+  return beats.filter(
+    (b) =>
+      b.endSeconds > b.startSeconds &&
+      b.startSeconds < range.end &&
+      b.endSeconds > range.start,
+  );
 }

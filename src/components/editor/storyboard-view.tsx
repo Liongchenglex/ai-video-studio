@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import {
   useEditor,
   absoluteShotRange,
+  beatsSpanned,
   type EditorBeat,
   type EditorShot,
 } from "@/components/editor/editor-store";
@@ -76,6 +77,15 @@ function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; i
   const { beats, selection, select, generateImage, generateClip } = useEditor();
   const status = rollupStatus(shot);
   const range = absoluteShotRange(shot, beats);
+  // Shots may span beat boundaries — narration is every overlapped beat's
+  // text, and the meta line reads "Beat 3" or "Beats 3–5" accordingly.
+  const spanned = beatsSpanned(shot, beats);
+  const spannedBeats = spanned.length > 0 ? spanned : [beat];
+  const narration = spannedBeats.map((b) => b.text).join(" ");
+  const firstBeatNo = spannedBeats[0].sortOrder + 1;
+  const lastBeatNo = spannedBeats[spannedBeats.length - 1].sortOrder + 1;
+  const beatLabel =
+    firstBeatNo === lastBeatNo ? `Beat ${firstBeatNo}` : `Beats ${firstBeatNo}–${lastBeatNo}`;
   const imageFailed = shot.imageStatus === "failed";
   const clipFailed = shot.clipStatus === "failed";
   const isSelected = selection?.type === "shot" && selection.shotId === shot.id;
@@ -109,7 +119,7 @@ function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; i
         {/* Meta line */}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>
-            Shot {index + 1} · Beat {beat.sortOrder + 1}
+            Shot {index + 1} · {beatLabel}
           </span>
           {range && (
             <span className="font-mono">
@@ -131,7 +141,7 @@ function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; i
           <div className="text-[10px] font-semibold uppercase tracking-wide text-blue-500">
             Script (narration)
           </div>
-          <p className="line-clamp-3 text-sm text-muted-foreground">&ldquo;{beat.text}&rdquo;</p>
+          <p className="line-clamp-3 text-sm text-muted-foreground">&ldquo;{narration}&rdquo;</p>
         </div>
 
         {/* Actions */}

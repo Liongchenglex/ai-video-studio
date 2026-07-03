@@ -469,9 +469,9 @@ handler). Remaining items to pick up:
   `editor-store` `splitShot` (server already copies asset paths; client
   nulls them until reload); align `docs/feature08/testcase-v4-phase2.md`
   TC-4.3 wording.
-- Reword two stale error strings referencing the removed `adopt-beats`
-  endpoint (`src/app/api/projects/[id]/shots/[shotId]/route.ts` and
-  `.../split/route.ts`: "run adopt-beats first").
+- ~~Reword two stale error strings referencing the removed `adopt-beats`
+  endpoint~~ — done 2026-07-03 (now "Shot has no anchor beat") as part of
+  the cross-beat shots change.
 - Enforce `MIN_SHOT_SECONDS` on recommend-inserted fragments (sub-0.25s
   beats can yield sub-minimum shots).
 - Wrap recommend's delete-then-insert in a DB transaction (failed insert

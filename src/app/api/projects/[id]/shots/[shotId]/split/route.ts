@@ -1,14 +1,14 @@
 /**
  * POST /api/projects/[id]/shots/[shotId]/split
- * Body: { atInBeat }
- * Splits a shot in two at the given beat-relative offset. Both halves
- * inherit the prompts and image/clip paths of the original; the user can
- * regenerate assets for either half afterwards.
+ * Body: { atInBeat } — offset relative to the shot's ANCHOR beat.
+ * Splits a shot in two. Both halves inherit the prompts and image/clip
+ * paths of the original. Shots may span beats (anchor-beat spillover), so
+ * the right half re-anchors to whichever beat contains the split point.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, shots } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { projects, shots, beats } from "@/lib/db/schema";
+import { eq, and, asc } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -18,6 +18,8 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
+import { anchorForTime } from "@/lib/shot-beat-mapping";
+import { computeBeatOffsets } from "@/lib/beat-timing";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
 
@@ -60,7 +62,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const start = shot.startInBeat;
   const end = shot.endInBeat;
   if (start == null || end == null || !shot.beatId) {
-    return badRequestResponse("Shot has no beat — run adopt-beats first");
+    return badRequestResponse("Shot has no anchor beat");
   }
   if (
     typeof at !== "number" ||
@@ -73,6 +75,20 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
+  // The right half starts at the split point, which may lie past the
+  // original anchor's end — re-anchor it to the beat containing that time.
+  const beatRows = await db
+    .select()
+    .from(beats)
+    .where(eq(beats.projectId, id))
+    .orderBy(asc(beats.sortOrder));
+  const offsets = computeBeatOffsets(beatRows);
+  const anchor = offsets.find((o) => o.id === shot.beatId);
+  if (!anchor) return badRequestResponse("Shot has no anchor beat");
+  const absSplit = anchor.startSeconds + at;
+  const absEnd = anchor.startSeconds + end;
+  const rightAnchor = anchorForTime(absSplit, offsets) ?? anchor;
+
   const [left] = await db
     .update(shots)
     .set({ endInBeat: at })
@@ -83,10 +99,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     .insert(shots)
     .values({
       projectId: id,
-      beatId: shot.beatId,
+      beatId: rightAnchor.id,
       sortOrder: shot.sortOrder + 1,
-      startInBeat: at,
-      endInBeat: end,
+      startInBeat: absSplit - rightAnchor.startSeconds,
+      endInBeat: absEnd - rightAnchor.startSeconds,
       imagePrompt: shot.imagePrompt,
       motionPrompt: shot.motionPrompt,
       imagePath: shot.imagePath,

@@ -1,13 +1,14 @@
 /**
  * POST /api/projects/[id]/shots
- * Creates a shot inside a beat (v4.0 beat-relative model). The shot is a
- * sub-range [startInBeat, endInBeat) of its beat's audio; it must not
- * overlap another shot in the same beat.
+ * Creates a shot anchored to a beat (anchor-beat spillover model). The shot
+ * STARTS inside its anchor beat (0 ≤ startInBeat < anchor duration) but may
+ * spill past the anchor's end into following beats. Overlap is forbidden
+ * against every other shot on the timeline (absolute ranges).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, shots, beats } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -17,7 +18,8 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
-import { MIN_SHOT_SECONDS } from "@/lib/shot-beat-mapping";
+import { MIN_SHOT_SECONDS, shotAbsoluteRange } from "@/lib/shot-beat-mapping";
+import { computeBeatOffsets, totalDurationSeconds } from "@/lib/beat-timing";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -60,23 +62,29 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (typeof body.beatId !== "string" || !isValidUUID(body.beatId)) {
     return badRequestResponse("Invalid beatId");
   }
-  // Cross-table authorization: the beat must belong to this project.
-  const [beat] = await db
+  // Cross-table authorization: the anchor beat must belong to this project.
+  // All beats are loaded so the anchor's absolute offset and the timeline
+  // end can be computed (shots may spill past their anchor).
+  const beatRows = await db
     .select()
     .from(beats)
-    .where(and(eq(beats.id, body.beatId), eq(beats.projectId, id)))
-    .limit(1);
-  if (!beat) return badRequestResponse("beatId does not belong to this project");
+    .where(eq(beats.projectId, id))
+    .orderBy(asc(beats.sortOrder));
+  const offsets = computeBeatOffsets(beatRows);
+  const anchor = offsets.find((o) => o.id === body.beatId);
+  if (!anchor) return badRequestResponse("beatId does not belong to this project");
 
-  const beatDur = beat.voDurationSeconds ?? 0;
+  const anchorDur = anchor.endSeconds - anchor.startSeconds;
+  const timelineEnd = totalDurationSeconds(beatRows);
   if (
     typeof body.startInBeat !== "number" ||
     typeof body.endInBeat !== "number" ||
     !Number.isFinite(body.startInBeat) ||
     !Number.isFinite(body.endInBeat) ||
     body.startInBeat < 0 ||
+    body.startInBeat >= anchorDur || // the shot must START inside its anchor
     body.endInBeat - body.startInBeat < MIN_SHOT_SECONDS ||
-    body.endInBeat > beatDur + 0.05
+    anchor.startSeconds + body.endInBeat > timelineEnd + 0.05
   ) {
     return badRequestResponse("Invalid startInBeat/endInBeat for this beat");
   }
@@ -99,20 +107,21 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
   }
 
-  // Overlap check against shots in the SAME beat only.
-  const siblings = await db
+  // Overlap check against EVERY shot on the timeline (absolute ranges) —
+  // shots can span beats, so per-beat checks are not sufficient.
+  const offsetById = new Map(offsets.map((o) => [o.id, o]));
+  const newStart = anchor.startSeconds + body.startInBeat;
+  const newEnd = anchor.startSeconds + body.endInBeat;
+  const existing = await db
     .select()
     .from(shots)
-    .where(and(eq(shots.projectId, id), eq(shots.beatId, body.beatId)));
-  const overlap = siblings.find(
-    (s) =>
-      s.startInBeat != null &&
-      s.endInBeat != null &&
-      s.startInBeat < body.endInBeat &&
-      s.endInBeat > body.startInBeat,
-  );
+    .where(eq(shots.projectId, id));
+  const overlap = existing.find((s) => {
+    const r = shotAbsoluteRange(s, offsetById);
+    return r !== null && r.start < newEnd && r.end > newStart;
+  });
   if (overlap) {
-    return badRequestResponse("Shot overlaps an existing shot in this beat");
+    return badRequestResponse("Shot overlaps an existing shot");
   }
 
   const [created] = await db
@@ -120,7 +129,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .values({
       projectId: id,
       beatId: body.beatId,
-      sortOrder: siblings.length,
+      sortOrder: existing.length,
       startInBeat: body.startInBeat,
       endInBeat: body.endInBeat,
       imagePrompt: trimmedImagePrompt,

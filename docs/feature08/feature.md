@@ -52,10 +52,13 @@ Frontend — `src/components/editor/`:
   timeline seconds (`play`, `pause`, `seek`).
 - `timeline-view.tsx` — the two-layer timeline: `BEATS` row (one block per
   beat, colored by `beatColor`, spinner while `voStatus: "generating"`,
-  red border on `"failed"`), `SHOTS` row (drag/trim persisted as
-  beat-relative offsets, clamped to the shot's own beat — cross-beat drag is
-  deferred), `VOICE` row (a slim per-beat audio bar). Click-to-select,
-  ruler + playhead drag, keyboard `S` (split) / `Del` (delete).
+  red border on `"failed"`), `SHOTS` row (drag/trim persisted as anchor +
+  offsets; shots may span beat boundaries — anchor-beat spillover — and a
+  drag that moves a shot's start across a boundary re-anchors it; clamps
+  run against neighboring shots and the timeline ends in absolute space),
+  `VOICE` row (a slim per-beat audio bar). Click-to-select, continuous gap
+  picking across beat boundaries, ruler + playhead drag, keyboard `S`
+  (split) / `Del` (delete).
 - `storyboard-view.tsx` — responsive card grid, one card per shot ordered by
   `(beat.sortOrder, startInBeat)`. Each card shows the clip/image thumbnail,
   a status badge, the shot's image prompt, the parent beat's narration
@@ -126,7 +129,7 @@ the additive-first migration convention completed its teardown this phase).
 | id | uuid | PK |
 | projectId | uuid (FK cascade) | |
 | sortOrder | integer | monotonic only; actual order is beat sortOrder + `startInBeat` |
-| **beatId** | uuid (FK cascade → `beats.id`) | nullable at the column level (additive-first), but every reachable code path requires it — a shot with no beat can't be created, and the migration that back-filled `beatId` for pre-Phase-2 shots has run |
+| **beatId** | uuid (FK cascade → `beats.id`) | nullable at the column level (additive-first), but every reachable code path requires it — a shot with no beat can't be created, and the migration that back-filled `beatId` for pre-Phase-2 shots has run ; since 2026-07-03 the beat is the shot's ANCHOR: the shot starts inside it but may spill past its end into following beats |
 | **startInBeat** | double precision | offset in seconds from the parent beat's start; source of truth for shot timing |
 | **endInBeat** | double precision | must be `> startInBeat`, `≤ beat.voDurationSeconds + 0.05` |
 | imagePrompt | text NOT NULL | subject + composition; ≤2,000 chars |
@@ -278,9 +281,13 @@ see the security section below).
 
 ## Tradeoffs / Debt
 
-- **No cross-beat shot drag.** A shot's drag/trim is clamped to its own
-  beat; moving a shot's visuals into a different beat isn't supported yet.
-  **Deferred to a later phase** (spec §8.1).
+- **Ripple can strand a spilled shot's anchor offsets.** Re-voicing a beat
+  changes its duration but never rewrites shot offsets, so a shot anchored
+  near the end of a beat that shrinks can be left with
+  `startInBeat ≥ anchor duration` in storage. Display and playback are pure
+  offset math and tolerate it; the next drag self-heals by re-anchoring
+  from the absolute position. Accepted tradeoff of the anchor-beat
+  spillover model (2026-07-03).
 - **No beat add/split/merge UI.** Editing inside a beat keeps it one beat
   (design decision, spec §8.1/backlog #14) — creating/splitting/merging
   beats themselves is not exposed in the UI.
@@ -303,8 +310,10 @@ phase:
 - **Phase 4 — Reference Bible (F-16):** `entities` CRUD, multi-view
   reference-sheet generation, auto-extract/auto-tag, FLUX conditioning.
   `shots.referencedEntityIds` exists as a column but is unused until then.
-- Beat add/split/merge UI, cross-beat shot drag, sub-beat narration slicing
-  (a shot's narration is always its whole parent beat's text).
+- Beat add/split/merge UI and sub-beat narration slicing (a shot's
+  narration is the whole text of every beat it overlaps — cross-beat shots
+  shipped 2026-07-03 with the anchor-beat spillover model, see
+  `docs/superpowers/plans/2026-07-03-cross-beat-shots.md`).
 
 ---
 

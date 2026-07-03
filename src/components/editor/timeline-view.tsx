@@ -5,16 +5,19 @@
  * pixel coordinate system (1s = PX_PER_SECOND px):
  *   - Ruler   — 5s ticks; click to seek.
  *   - BEATS   — one colored block per beat (the audio segments).
- *   - SHOTS   — draggable/trimmable shot blocks; each lives inside one beat.
+ *   - SHOTS   — draggable/trimmable shot blocks; anchored to the beat that
+ *               contains their start but free to span into following beats
+ *               (anchor-beat spillover).
  *   - VOICE   — one slim blue bar per beat so audio start/stop is visible.
  * A red playhead spans every band.
  *
  * All persistent state comes from `useEditor()`; this component owns only
  * transient drag-interaction state. Shot drags are optimistic (a local
- * absolute-seconds range) and persisted on drag-end as beat-relative
- * offsets via `updateShot`. Movement and trimming are clamped to the shot's
- * own beat and its siblings so the server never bounces the drag
- * (cross-beat drag is deferred — see Global Constraints).
+ * absolute-seconds range) and persisted on drag-end as anchor + offsets via
+ * `updateShot` — a drag that moves the start into a different beat
+ * re-anchors the shot. Movement and trimming are clamped against the
+ * neighboring shots and the timeline ends (absolute space) so the server
+ * never bounces the drag.
  *
  * Ported from `editor-prototype.tsx` (PX_PER_SECOND, xToSeconds, the ruler,
  * the window-level mousemove/mouseup drag effect, playhead drag, and the
@@ -43,18 +46,12 @@ const MIN_SHOT_LENGTH = 0.25; // seconds — server MIN clamp
 const MIN_HALF = 0.25; // seconds — each side of a split (server MIN_HALF_SECONDS)
 const LABEL_GUTTER_PX = 64;
 
-// Absolute-seconds range used while a shot is being dragged (optimistic).
+// Absolute-seconds range used while a shot is being dragged (optimistic);
+// converted to anchor + offsets when persisted on drag-end.
 interface DragRange {
   shotId: string;
   start: number;
   end: number;
-}
-
-// Beat-relative offsets captured on each move for persistence on drag-end.
-interface DragRel {
-  shotId: string;
-  startInBeat: number;
-  endInBeat: number;
 }
 
 type DragMode =
@@ -80,7 +77,7 @@ export function TimelineView({
 
   const [drag, setDrag] = useState<DragMode | null>(null);
   const [dragRange, setDragRange] = useState<DragRange | null>(null);
-  const dragRelRef = useRef<DragRel | null>(null);
+  const dragAbsRef = useRef<DragRange | null>(null);
 
   // ── Pixel ⇄ seconds ──
   const xToSeconds = useCallback((clientX: number): number => {
@@ -89,31 +86,37 @@ export function TimelineView({
     return Math.max(0, (clientX - rect.left) / PX_PER_SECOND);
   }, []);
 
-  // The beat a shot belongs to, plus its usable duration.
-  const beatOfShot = useCallback(
-    (shot: EditorShot): EditorBeat | null =>
-      shot.beatId ? beats.find((b) => b.id === shot.beatId) ?? null : null,
+  // The anchor beat for a timeline position: the beat containing it, with
+  // the very end of the timeline resolving to the last beat.
+  const anchorAt = useCallback(
+    (seconds: number): EditorBeat | null => {
+      const hit = beats.find((b) => seconds >= b.startSeconds && seconds < b.endSeconds);
+      if (hit) return hit;
+      const last = beats[beats.length - 1];
+      return last && seconds >= last.endSeconds - 1e-6 ? last : null;
+    },
     [beats],
   );
 
-  // Free interval [lower, upper] (beat-relative) around the shot's persisted
-  // range, bounded by its in-beat siblings so drags never overlap.
+  // Free interval [lower, upper] (absolute seconds) around the shot's
+  // persisted range, bounded by its neighboring shots and the timeline ends
+  // so drags never overlap — shots may span beats.
   const freeBounds = useCallback(
-    (shot: EditorShot, beat: EditorBeat) => {
-      const beatDur = beat.endSeconds - beat.startSeconds;
-      const origStart = shot.startInBeat ?? 0;
-      const origEnd = shot.endInBeat ?? 0;
+    (shot: EditorShot) => {
+      const orig = absoluteShotRange(shot, beats);
+      if (!orig) return null;
       let lower = 0;
-      let upper = beatDur;
+      let upper = totalDuration;
       for (const s of shots) {
-        if (s.id === shot.id || s.beatId !== beat.id) continue;
-        if (s.startInBeat == null || s.endInBeat == null) continue;
-        if (s.endInBeat <= origStart) lower = Math.max(lower, s.endInBeat);
-        else if (s.startInBeat >= origEnd) upper = Math.min(upper, s.startInBeat);
+        if (s.id === shot.id) continue;
+        const r = absoluteShotRange(s, beats);
+        if (!r) continue;
+        if (r.end <= orig.start) lower = Math.max(lower, r.end);
+        else if (r.start >= orig.end) upper = Math.min(upper, r.start);
       }
-      return { beatDur, origStart, origEnd, lower, upper };
+      return { origStart: orig.start, origEnd: orig.end, lower, upper };
     },
-    [shots],
+    [shots, beats, totalDuration],
   );
 
   // ── Window-level drag (mousemove/mouseup) ──
@@ -127,45 +130,43 @@ export function TimelineView({
         return;
       }
       const shot = shots.find((s) => s.id === drag.shotId);
-      const beat = shot ? beatOfShot(shot) : null;
-      if (!shot || !beat) return;
-      const { origStart, origEnd, lower, upper } = freeBounds(shot, beat);
+      const bounds = shot ? freeBounds(shot) : null;
+      if (!shot || !bounds) return;
+      const { origStart, origEnd, lower, upper } = bounds;
 
-      let startInBeat = origStart;
-      let endInBeat = origEnd;
+      let start = origStart;
+      let end = origEnd;
       if (drag.type === "move") {
         const len = origEnd - origStart;
-        const desired = mouseSec - drag.grabOffsetSec - beat.startSeconds;
-        startInBeat = clamp(desired, lower, Math.max(lower, upper - len));
-        endInBeat = startInBeat + len;
+        start = clamp(mouseSec - drag.grabOffsetSec, lower, Math.max(lower, upper - len));
+        end = start + len;
       } else if (drag.type === "trim-left") {
-        const desired = mouseSec - beat.startSeconds;
-        startInBeat = clamp(desired, lower, origEnd - MIN_SHOT_LENGTH);
-        endInBeat = origEnd;
+        start = clamp(mouseSec, lower, origEnd - MIN_SHOT_LENGTH);
       } else {
-        const desired = mouseSec - beat.startSeconds;
-        endInBeat = clamp(desired, origStart + MIN_SHOT_LENGTH, upper);
-        startInBeat = origStart;
+        end = clamp(mouseSec, origStart + MIN_SHOT_LENGTH, upper);
       }
 
-      dragRelRef.current = { shotId: shot.id, startInBeat, endInBeat };
-      setDragRange({
-        shotId: shot.id,
-        start: beat.startSeconds + startInBeat,
-        end: beat.startSeconds + endInBeat,
-      });
+      dragAbsRef.current = { shotId: shot.id, start, end };
+      setDragRange({ shotId: shot.id, start, end });
     };
 
     const onUp = () => {
       if (drag.type !== "playhead") {
-        const rel = dragRelRef.current;
-        if (rel && rel.shotId === drag.shotId) {
-          updateShot(rel.shotId, { startInBeat: rel.startInBeat, endInBeat: rel.endInBeat });
+        const abs = dragAbsRef.current;
+        const anchor = abs ? anchorAt(abs.start) : null;
+        if (abs && abs.shotId === drag.shotId && anchor) {
+          // Persist as anchor + offsets; the anchor may differ from the
+          // shot's previous beat when the start crossed a boundary.
+          updateShot(abs.shotId, {
+            beatId: anchor.id,
+            startInBeat: abs.start - anchor.startSeconds,
+            endInBeat: abs.end - anchor.startSeconds,
+          });
         }
       }
       setDrag(null);
       setDragRange(null);
-      dragRelRef.current = null;
+      dragAbsRef.current = null;
     };
 
     window.addEventListener("mousemove", onMove);
@@ -174,7 +175,7 @@ export function TimelineView({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [drag, shots, xToSeconds, onSeek, beatOfShot, freeBounds, updateShot]);
+  }, [drag, shots, xToSeconds, onSeek, anchorAt, freeBounds, updateShot]);
 
   // ── Drag starts ──
   const startMove = (e: React.MouseEvent, shot: EditorShot) => {
@@ -199,23 +200,30 @@ export function TimelineView({
   };
 
   // ── Empty shots-row click → select the free gap under the cursor ──
+  // Gaps are continuous across beat boundaries: previous shot end → next
+  // shot start (absolute), anchored to the beat containing the gap's start.
   const handleShotsRowClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return; // ignore clicks on shot blocks
     const clickSec = xToSeconds(e.clientX);
-    const beat = beats.find((b) => clickSec >= b.startSeconds && clickSec < b.endSeconds);
-    if (!beat) return;
-    const beatDur = beat.endSeconds - beat.startSeconds;
-    const inBeat = clickSec - beat.startSeconds;
+    if (clickSec >= totalDuration) return;
     let lower = 0;
-    let upper = beatDur;
+    let upper = totalDuration;
     for (const s of shots) {
-      if (s.beatId !== beat.id || s.startInBeat == null || s.endInBeat == null) continue;
-      if (inBeat >= s.startInBeat && inBeat < s.endInBeat) return; // inside a shot
-      if (s.endInBeat <= inBeat) lower = Math.max(lower, s.endInBeat);
-      else if (s.startInBeat >= inBeat) upper = Math.min(upper, s.startInBeat);
+      const r = absoluteShotRange(s, beats);
+      if (!r) continue;
+      if (clickSec >= r.start && clickSec < r.end) return; // inside a shot
+      if (r.end <= clickSec) lower = Math.max(lower, r.end);
+      else if (r.start >= clickSec) upper = Math.min(upper, r.start);
     }
     if (upper - lower < MIN_SHOT_LENGTH) return;
-    select({ type: "gap", beatId: beat.id, startInBeat: lower, endInBeat: upper });
+    const anchor = anchorAt(lower);
+    if (!anchor) return;
+    select({
+      type: "gap",
+      beatId: anchor.id,
+      startInBeat: lower - anchor.startSeconds,
+      endInBeat: upper - anchor.startSeconds,
+    });
   };
 
   // ── Keyboard: S splits at playhead, Del deletes ──
@@ -234,18 +242,20 @@ export function TimelineView({
         return;
       }
       if (e.key === "s" || e.key === "S") {
-        const beat = beatOfShot(shot);
+        const anchor = shot.beatId ? beats.find((b) => b.id === shot.beatId) : null;
         const range = absoluteShotRange(shot, beats);
-        if (!beat || !range) return;
+        if (!anchor || !range) return;
         if (playheadSeconds > range.start + MIN_HALF && playheadSeconds < range.end - MIN_HALF) {
           e.preventDefault();
-          splitShot(shot.id, playheadSeconds - beat.startSeconds);
+          // atInBeat is relative to the ANCHOR — it may exceed the anchor's
+          // duration when the split point lies in a spanned beat.
+          splitShot(shot.id, playheadSeconds - anchor.startSeconds);
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selection, shots, beats, playheadSeconds, deleteShot, splitShot, beatOfShot]);
+  }, [selection, shots, beats, playheadSeconds, deleteShot, splitShot]);
 
   const rowLabel = (text: string) => (
     <div

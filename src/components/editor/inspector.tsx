@@ -10,8 +10,9 @@
  *   - null → the shot under the playhead (ported ActiveShotPreview).
  *
  * All persistence goes through the store; AI-suggest calls the existing
- * suggest-image / suggest-motion endpoints with voText = the parent beat's
- * text (beats own the words in v4.0).
+ * suggest-image / suggest-motion endpoints with voText = the narration
+ * under the shot's time range — the joined text of every beat it overlaps,
+ * since shots may span beat boundaries (anchor-beat spillover).
  */
 "use client";
 
@@ -32,6 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   useEditor,
   absoluteShotRange,
+  beatsSpanned,
   type EditorBeat,
   type EditorShot,
 } from "@/components/editor/editor-store";
@@ -219,6 +221,14 @@ function ActiveShotPreview({ shot }: { shot: EditorShot }) {
 
 // ─── Shot edit panel (shot selection) ─────────────────────────────────
 
+// "beat 3" or "beats 3–5" — shots may span beat boundaries.
+function spanLabel(spanned: EditorBeat[]): string {
+  if (spanned.length === 0) return "beat ?";
+  const first = spanned[0].sortOrder + 1;
+  const last = spanned[spanned.length - 1].sortOrder + 1;
+  return first === last ? `beat ${first}` : `beats ${first}–${last}`;
+}
+
 function ShotEditPanel({
   shot,
   beat,
@@ -230,7 +240,10 @@ function ShotEditPanel({
 }) {
   const { projectId, beats, updateShot, deleteShot, splitShot, generateImage, generateClip } =
     useEditor();
-  const voText = beat?.text ?? "";
+  // Narration under the shot's time range — the concatenated text of every
+  // beat it overlaps (shots may spill past their anchor beat).
+  const spanned = beatsSpanned(shot, beats);
+  const voText = spanned.length > 0 ? spanned.map((b) => b.text).join(" ") : beat?.text ?? "";
 
   const [imagePrompt, setImagePrompt] = useState(shot.imagePrompt);
   const [motionPrompt, setMotionPrompt] = useState(shot.motionPrompt);
@@ -358,15 +371,19 @@ function ShotEditPanel({
 
       <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
         <Badge variant="outline">
-          {(shot.startInBeat ?? 0).toFixed(1)}–{(shot.endInBeat ?? 0).toFixed(1)}s in beat{" "}
-          {beat ? beat.sortOrder + 1 : "?"}
+          {(() => {
+            const range = absoluteShotRange(shot, beats);
+            return range
+              ? `${range.start.toFixed(1)}–${range.end.toFixed(1)}s · ${spanLabel(spanned)}`
+              : `beat ${beat ? beat.sortOrder + 1 : "?"}`;
+          })()}
         </Badge>
       </div>
 
       {voText && (
         <div className="space-y-1">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            VO (beat)
+            VO (narration)
           </p>
           <p className="text-xs font-mono">{voText}</p>
         </div>
@@ -534,7 +551,16 @@ function GapCreateForm({
 }) {
   const { projectId, beats, createShot, select } = useEditor();
   const beat = beats.find((b) => b.id === selection.beatId) ?? null;
-  const voText = beat?.text ?? "";
+  // The gap may span beat boundaries (offsets are relative to its anchor
+  // beat) — narration is every beat the absolute range overlaps.
+  const gapStart = (beat?.startSeconds ?? 0) + selection.startInBeat;
+  const gapEnd = (beat?.startSeconds ?? 0) + selection.endInBeat;
+  const spanned = beat
+    ? beats.filter(
+        (b) => b.endSeconds > b.startSeconds && b.startSeconds < gapEnd && b.endSeconds > gapStart,
+      )
+    : [];
+  const voText = spanned.length > 0 ? spanned.map((b) => b.text).join(" ") : beat?.text ?? "";
 
   const [imagePrompt, setImagePrompt] = useState("");
   const [motionPrompt, setMotionPrompt] = useState("");
@@ -598,15 +624,14 @@ function GapCreateForm({
     <>
       <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
         <Badge variant="outline">
-          {selection.startInBeat.toFixed(1)}–{selection.endInBeat.toFixed(1)}s in beat{" "}
-          {beat ? beat.sortOrder + 1 : "?"}
+          {gapStart.toFixed(1)}–{gapEnd.toFixed(1)}s · {spanLabel(spanned)}
         </Badge>
       </div>
 
       {voText && (
         <div className="space-y-1">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            VO here (beat)
+            VO here
           </p>
           <p className="text-xs font-mono">{voText}</p>
         </div>
