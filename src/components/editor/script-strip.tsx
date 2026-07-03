@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEditor, beatColor } from "@/components/editor/editor-store";
 
@@ -14,13 +14,25 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
   const { beats, selection, select, revoiceBeat } = useEditor();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // Guards against double-commit: pressing Enter calls commit(), which
+  // unmounts the textarea (setEditingId(null)) and fires its onBlur, which
+  // would otherwise call commit() a second time and re-voice twice.
+  const committingRef = useRef<string | null>(null);
 
   const commit = async (beatId: string, original: string) => {
+    if (committingRef.current === beatId) return; // already handled by a prior invocation
+    committingRef.current = beatId;
     setEditingId(null);
-    const next = draft.trim();
-    if (next.length === 0 || next === original) return;
-    if (next.length > 2000) return; // mirror the server cap
-    await revoiceBeat(beatId, next);
+    try {
+      const next = draft.trim();
+      // Empty text is treated as an explicit cancel (same as Escape) —
+      // close the editor without re-voicing, no silent-discard ambiguity.
+      if (next.length === 0 || next === original) return;
+      if (next.length > 2000) return; // mirror the server cap
+      await revoiceBeat(beatId, next);
+    } finally {
+      committingRef.current = null;
+    }
   };
 
   return (
@@ -46,6 +58,7 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
               }}
               rows={2}
               maxLength={2000}
+              title="Enter saves & re-voices this beat · Esc cancels · empty text cancels"
               className="my-1 w-full rounded border bg-background p-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
           ) : (
