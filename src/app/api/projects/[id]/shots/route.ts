@@ -80,8 +80,23 @@ export async function POST(request: NextRequest, { params }: Params) {
   ) {
     return badRequestResponse("Invalid startInBeat/endInBeat for this beat");
   }
-  if (!body.imagePrompt || body.imagePrompt.trim().length === 0) {
+  if (typeof body.imagePrompt !== "string") {
+    return badRequestResponse("imagePrompt must be a string");
+  }
+  const trimmedImagePrompt = body.imagePrompt.trim();
+  if (trimmedImagePrompt.length === 0) {
     return badRequestResponse("imagePrompt is required");
+  }
+  if (trimmedImagePrompt.length > 2000) {
+    return badRequestResponse("imagePrompt too long (max 2000 characters)");
+  }
+  if (body.motionPrompt !== undefined) {
+    if (typeof body.motionPrompt !== "string") {
+      return badRequestResponse("motionPrompt must be a string");
+    }
+    if (body.motionPrompt.trim().length > 2000) {
+      return badRequestResponse("motionPrompt too long (max 2000 characters)");
+    }
   }
 
   // Overlap check against shots in the SAME beat only.
@@ -108,7 +123,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       sortOrder: siblings.length,
       startInBeat: body.startInBeat,
       endInBeat: body.endInBeat,
-      imagePrompt: body.imagePrompt.trim(),
+      imagePrompt: trimmedImagePrompt,
       motionPrompt: body.motionPrompt?.trim() || DEFAULT_MOTION_PROMPT,
     })
     .returning();

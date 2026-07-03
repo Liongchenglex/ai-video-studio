@@ -81,8 +81,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     console.log(`[shots/recommend] inserted ${inserted.length} shots for project ${id}`);
     return NextResponse.json({ shots: inserted });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Unknown error";
-    console.error("[shots/recommend] failed:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error("[shots/recommend] failed:", error);
+    return NextResponse.json({ error: "Shot recommendation failed" }, { status: 500 });
   }
 }

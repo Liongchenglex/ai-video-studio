@@ -7,11 +7,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, beats } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { getSession, unauthorizedResponse, badRequestResponse } from "@/lib/api-utils";
+import {
+  getSession,
+  unauthorizedResponse,
+  badRequestResponse,
+  verifyCsrf,
+  applyRateLimit,
+} from "@/lib/api-utils";
 import { generateMusic } from "@/lib/music-generation";
 import { totalDurationSeconds } from "@/lib/beat-timing";
 
 export async function POST(request: NextRequest) {
+  const rateLimitError = applyRateLimit(request, "generation");
+  if (rateLimitError) return rateLimitError;
+
+  const csrfError = await verifyCsrf(request);
+  if (csrfError) return csrfError;
+
   const session = await getSession();
   if (!session) return unauthorizedResponse();
 
@@ -46,8 +58,7 @@ export async function POST(request: NextRequest) {
     console.log(`[test/music] Done: ${result.r2Key}`);
     return NextResponse.json({ success: true, r2Key: result.r2Key });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[test/music] Failed:`, msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error(`[test/music] Failed:`, error);
+    return NextResponse.json({ error: "Music generation failed" }, { status: 500 });
   }
 }

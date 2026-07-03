@@ -111,13 +111,25 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 
   if (body.imagePrompt !== undefined) {
+    if (typeof body.imagePrompt !== "string") {
+      return badRequestResponse("imagePrompt must be a string");
+    }
     const p = body.imagePrompt.trim();
     if (p.length === 0) return badRequestResponse("imagePrompt cannot be empty");
+    if (p.length > 2000) {
+      return badRequestResponse("imagePrompt too long (max 2000 characters)");
+    }
     updates.imagePrompt = p;
   }
   if (body.motionPrompt !== undefined) {
+    if (typeof body.motionPrompt !== "string") {
+      return badRequestResponse("motionPrompt must be a string");
+    }
     const p = body.motionPrompt.trim();
     if (p.length === 0) return badRequestResponse("motionPrompt cannot be empty");
+    if (p.length > 2000) {
+      return badRequestResponse("motionPrompt too long (max 2000 characters)");
+    }
     updates.motionPrompt = p;
   }
 
