@@ -1,7 +1,9 @@
 /**
- * Project workspace orchestrator (PRD v3.0 stepper).
- * Four steps: Concept → Style → Script → Editor.
- * All state lives here; step components are pure renderers.
+ * Project workspace orchestrator (v4.0 stepper).
+ * Three steps: Concept → Style → Editor. Brief and style state live here;
+ * the script/voice/shots state moved into the unified editor's store and
+ * gates. Step 2 mounts <UnifiedEditor/>, which is one screen for writing,
+ * voicing, and storyboarding.
  */
 "use client";
 
@@ -14,26 +16,8 @@ import { Separator } from "@/components/ui/separator";
 import { ProjectStepper } from "@/components/project-stepper";
 import { VideoBrief } from "@/components/video-brief";
 import { StepStyle } from "@/components/step-style";
-import { StepScript } from "@/components/step-script";
-import { StepEditor } from "@/components/step-editor";
-
-export interface ShotData {
-  id: string;
-  projectId: string;
-  sortOrder: number;
-  startSeconds: number;
-  endSeconds: number;
-  text: string | null;
-  imagePrompt: string;
-  motionPrompt: string;
-  imagePath: string | null;
-  imageStatus: string;
-  clipPath: string | null;
-  clipStatus: string;
-  clipDurationSeconds: number | null;
-  imageUrl?: string | null;
-  clipUrl?: string | null;
-}
+import { UnifiedEditor } from "@/components/editor/unified-editor";
+import type { EditorBeat, EditorShot } from "@/components/editor/editor-store";
 
 interface ProjectWorkspaceProps {
   project: {
@@ -50,15 +34,9 @@ interface ProjectWorkspaceProps {
     tone: string;
     script: string | null;
     voiceId: string;
-    voiceoverPath: string | null;
-    voiceoverStatus: string;
-    voiceoverUrl: string | null;
-    durationSeconds: number | null;
-    musicPath: string | null;
-    musicStatus: string | null;
-    musicMood: string;
   };
-  initialShots: ShotData[];
+  initialBeats: EditorBeat[];
+  initialShots: EditorShot[];
 }
 
 const statusLabel: Record<string, string> = {
@@ -68,7 +46,7 @@ const statusLabel: Record<string, string> = {
   published: "Published",
 };
 
-export function ProjectWorkspace({ project, initialShots }: ProjectWorkspaceProps) {
+export function ProjectWorkspace({ project, initialBeats, initialShots }: ProjectWorkspaceProps) {
   const router = useRouter();
 
   // ── Brief state ──
@@ -87,38 +65,30 @@ export function ProjectWorkspace({ project, initialShots }: ProjectWorkspaceProp
   const [templateSaved, setTemplateSaved] = useState(false);
   const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
 
-  // ── Script state ──
-  const [script, setScript] = useState(project.script || "");
-  const [generatingScript, setGeneratingScript] = useState(false);
-
-  // ── Voice state ──
+  // ── Voice (the editor's store owns beats/shots; workspace keeps only the
+  // project-level voice selection so the voiceId patch stays in one place) ──
   const [voiceId, setVoiceId] = useState(project.voiceId);
-  const [voiceoverUrl, setVoiceoverUrl] = useState<string | null>(project.voiceoverUrl);
-  const [voiceoverStatus, setVoiceoverStatus] = useState(project.voiceoverStatus);
-  const [durationSeconds, setDurationSeconds] = useState<number | null>(project.durationSeconds);
-
-  // ── Shots state ──
-  const [shots, setShots] = useState<ShotData[]>(initialShots);
-  const [recommendingShots, setRecommendingShots] = useState(false);
 
   const hasRefImages = refKeys.length > 0;
-  const hasScript = script.trim().length > 0;
-  const hasVO = voiceoverStatus === "done" && !!voiceoverUrl;
-
-  const handleStepChange = useCallback((step: number) => {
-    setCurrentStep(step);
-    if (step === 3) {
-      // Coming into the editor — pull fresh server data (covers the case where
-      // VO was generated in a prior visit and the parent state is stale).
-      router.refresh();
-    }
-  }, [router]);
+  const hasScript = (project.script?.trim().length ?? 0) > 0;
 
   const [currentStep, setCurrentStep] = useState(() => {
-    if (hasScript) return 2;
+    if (hasScript || initialBeats.length > 0) return 2;
     if (styleString.length > 0 || hasRefImages) return 1;
     return 0;
   });
+
+  const handleStepChange = useCallback(
+    (step: number) => {
+      setCurrentStep(step);
+      if (step === 2) {
+        // Entering the editor — pull fresh server data so beats/shots created
+        // on a prior visit show up.
+        router.refresh();
+      }
+    },
+    [router],
+  );
 
   // ── Step completion ──
   const steps = [
@@ -133,14 +103,9 @@ export function ProjectWorkspace({ project, initialShots }: ProjectWorkspaceProp
       completed: styleString.length > 0 || hasRefImages,
     },
     {
-      label: "Script",
-      description: "Draft & edit",
-      completed: hasScript,
-    },
-    {
       label: "Editor",
-      description: "Voice & shots",
-      completed: hasVO && shots.length > 0,
+      description: "Write · voice · direct",
+      completed: initialBeats.length > 0 && initialShots.length > 0,
     },
   ];
 
@@ -213,50 +178,7 @@ export function ProjectWorkspace({ project, initialShots }: ProjectWorkspaceProp
     }
   }, [project.id, templateName]);
 
-  // ── Script handlers ──
-  const handleGenerateScript = useCallback(async () => {
-    setGeneratingScript(true);
-    try {
-      const res = await fetch(`/api/projects/${project.id}/script/generate`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setScript(data.script);
-        // Regenerating script invalidates any VO.
-        setVoiceoverUrl(null);
-        setVoiceoverStatus("pending");
-        setDurationSeconds(null);
-      }
-    } finally {
-      setGeneratingScript(false);
-    }
-  }, [project.id]);
-
-  // ── Voice handlers ──
-  const handleGenerateVoiceover = useCallback(async () => {
-    setVoiceoverStatus("generating");
-    try {
-      const res = await fetch(`/api/projects/${project.id}/voiceover/generate`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          r2Key: string;
-          durationSeconds: number;
-          voiceoverUrl: string;
-        };
-        setVoiceoverUrl(data.voiceoverUrl);
-        setDurationSeconds(data.durationSeconds);
-        setVoiceoverStatus("done");
-      } else {
-        setVoiceoverStatus("failed");
-      }
-    } catch {
-      setVoiceoverStatus("failed");
-    }
-  }, [project.id]);
-
+  // ── Voice handler (project-level; editor gates call it too) ──
   const handleVoiceChange = useCallback(
     async (newVoiceId: string) => {
       setVoiceId(newVoiceId);
@@ -269,41 +191,12 @@ export function ProjectWorkspace({ project, initialShots }: ProjectWorkspaceProp
     [project.id],
   );
 
-  // ── Shot handlers ──
-  const handleRecommendShots = useCallback(async () => {
-    setRecommendingShots(true);
-    try {
-      const res = await fetch(`/api/projects/${project.id}/shots/recommend`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        console.error("[recommend-shots] server error:", err);
-        return;
-      }
-      const data = (await res.json()) as { shots: ShotData[] };
-      console.log(`[recommend-shots] received ${data.shots.length} shots`);
-      // Clear first to force a remount of downstream memo-based state,
-      // then set — React 18 batches these so UI only sees the new list.
-      setShots([]);
-      setShots(data.shots);
-    } catch (err) {
-      console.error("[recommend-shots] fetch failed:", err);
-    } finally {
-      setRecommendingShots(false);
-    }
-  }, [project.id]);
-
   // The editor step needs more horizontal room than the other steps.
-  const containerMax = currentStep === 3 ? "max-w-[96rem]" : "max-w-5xl";
+  const containerMax = currentStep === 2 ? "max-w-[96rem]" : "max-w-5xl";
 
   return (
     <main className={`mx-auto ${containerMax} px-4 py-8`}>
-      <Button
-        variant="ghost"
-        className="mb-6"
-        onClick={() => router.push("/dashboard")}
-      >
+      <Button variant="ghost" className="mb-6" onClick={() => router.push("/dashboard")}>
         <ArrowLeft className="mr-2 h-4 w-4" />
         Back to dashboard
       </Button>
@@ -311,18 +204,12 @@ export function ProjectWorkspace({ project, initialShots }: ProjectWorkspaceProp
       <div className="mb-6 flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-bold">{project.name}</h1>
-          {project.topic && (
-            <p className="mt-1 text-muted-foreground">{project.topic}</p>
-          )}
+          {project.topic && <p className="mt-1 text-muted-foreground">{project.topic}</p>}
         </div>
         <Badge variant="secondary">{statusLabel[project.status]}</Badge>
       </div>
 
-      <ProjectStepper
-        currentStep={currentStep}
-        steps={steps}
-        onStepClick={handleStepChange}
-      />
+      <ProjectStepper currentStep={currentStep} steps={steps} onStepClick={handleStepChange} />
 
       <Separator className="mb-8" />
 
@@ -365,43 +252,19 @@ export function ProjectWorkspace({ project, initialShots }: ProjectWorkspaceProp
             setRefKeys([]);
             setPreviewUrl(null);
           }}
-          onNext={() => setCurrentStep(2)}
+          onNext={() => handleStepChange(2)}
           onBack={() => setCurrentStep(0)}
         />
       )}
 
       {currentStep === 2 && (
-        <StepScript
+        <UnifiedEditor
           projectId={project.id}
-          brief={brief}
-          duration={targetDuration}
-          tone={tone}
-          script={script}
-          generatingScript={generatingScript}
-          onBriefChange={setBrief}
-          onDurationChange={setTargetDuration}
-          onToneChange={setTone}
-          onScriptChange={setScript}
-          onGenerateScript={handleGenerateScript}
-          onBack={() => setCurrentStep(1)}
-          onNext={() => handleStepChange(3)}
-        />
-      )}
-
-      {currentStep === 3 && (
-        <StepEditor
-          projectId={project.id}
-          script={script}
-          voiceoverUrl={voiceoverUrl}
-          voiceoverStatus={voiceoverStatus}
-          durationSeconds={durationSeconds}
+          script={project.script}
           voiceId={voiceId}
-          shots={shots}
-          recommendingShots={recommendingShots}
-          onGenerateVoiceover={handleGenerateVoiceover}
-          onRecommendShots={handleRecommendShots}
+          initialBeats={initialBeats}
+          initialShots={initialShots}
           onVoiceChange={handleVoiceChange}
-          onBack={() => setCurrentStep(2)}
         />
       )}
     </main>
