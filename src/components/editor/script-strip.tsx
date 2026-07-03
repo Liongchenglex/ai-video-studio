@@ -14,25 +14,21 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
   const { beats, selection, select, revoiceBeat } = useEditor();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  // Guards against double-commit: pressing Enter calls commit(), which
-  // unmounts the textarea (setEditingId(null)) and fires its onBlur, which
-  // would otherwise call commit() a second time and re-voice twice.
-  const committingRef = useRef<string | null>(null);
+  // Guards against double-commit: pressing Enter (or Escape) calls commit()
+  // or setEditingId(null) directly, which unmounts the textarea and fires
+  // its onBlur. Setting this flag beforehand tells onBlur to no-op instead
+  // of re-running commit() (Enter) or saving a draft that should be
+  // discarded (Escape).
+  const skipBlurRef = useRef(false);
 
   const commit = async (beatId: string, original: string) => {
-    if (committingRef.current === beatId) return; // already handled by a prior invocation
-    committingRef.current = beatId;
     setEditingId(null);
-    try {
-      const next = draft.trim();
-      // Empty text is treated as an explicit cancel (same as Escape) —
-      // close the editor without re-voicing, no silent-discard ambiguity.
-      if (next.length === 0 || next === original) return;
-      if (next.length > 2000) return; // mirror the server cap
-      await revoiceBeat(beatId, next);
-    } finally {
-      committingRef.current = null;
-    }
+    const next = draft.trim();
+    // Empty text is treated as an explicit cancel (same as Escape) —
+    // close the editor without re-voicing, no silent-discard ambiguity.
+    if (next.length === 0 || next === original) return;
+    if (next.length > 2000) return; // mirror the server cap
+    await revoiceBeat(beatId, next);
   };
 
   return (
@@ -48,13 +44,23 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
               autoFocus
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => commit(beat.id, beat.text)}
+              onBlur={() => {
+                if (skipBlurRef.current) {
+                  skipBlurRef.current = false;
+                  return;
+                }
+                commit(beat.id, beat.text);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
+                  skipBlurRef.current = true;
                   commit(beat.id, beat.text);
                 }
-                if (e.key === "Escape") setEditingId(null);
+                if (e.key === "Escape") {
+                  skipBlurRef.current = true;
+                  setEditingId(null); // true cancel — no commit, draft discarded
+                }
               }}
               rows={2}
               maxLength={2000}
@@ -69,6 +75,7 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
                 onSeek(beat.startSeconds);
               }}
               onDoubleClick={() => {
+                skipBlurRef.current = false; // stale flag must never suppress this session's blur
                 setEditingId(beat.id);
                 setDraft(beat.text);
               }}
