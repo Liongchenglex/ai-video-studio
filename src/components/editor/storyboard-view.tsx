@@ -71,12 +71,14 @@ function StatusBadge({ status }: { status: RollupStatus }) {
   }
 }
 
-function ShotCard({ shot, beat }: { shot: EditorShot; beat: EditorBeat }) {
-  const { beats, select, generateImage, generateClip } = useEditor();
+function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; index: number }) {
+  const { beats, selection, select, generateImage, generateClip } = useEditor();
   const status = rollupStatus(shot);
   const range = absoluteShotRange(shot, beats);
   const imageFailed = shot.imageStatus === "failed";
   const clipFailed = shot.clipStatus === "failed";
+  const isSelected = selection?.type === "shot" && selection.shotId === shot.id;
+  const isGenerating = shot.imageStatus === "generating" || shot.clipStatus === "generating";
 
   const retry = () => {
     if (imageFailed) generateImage(shot.id);
@@ -85,7 +87,7 @@ function ShotCard({ shot, beat }: { shot: EditorShot; beat: EditorBeat }) {
 
   return (
     <Card
-      className="cursor-pointer gap-0 p-0"
+      className={`cursor-pointer gap-0 p-0 ${isSelected ? "ring-2 ring-primary" : ""}`}
       onClick={() => select({ type: "shot", shotId: shot.id })}
     >
       {/* Thumbnail band */}
@@ -114,7 +116,7 @@ function ShotCard({ shot, beat }: { shot: EditorShot; beat: EditorBeat }) {
         {/* Meta line */}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>
-            Shot {shot.sortOrder + 1} · Beat {beat.sortOrder + 1}
+            Shot {index + 1} · Beat {beat.sortOrder + 1}
           </span>
           {range && (
             <span className="font-mono">
@@ -163,7 +165,7 @@ function ShotCard({ shot, beat }: { shot: EditorShot; beat: EditorBeat }) {
                 variant="outline"
                 size="sm"
                 className="flex-1"
-                disabled={shot.imageStatus === "generating"}
+                disabled={isGenerating}
                 onClick={() => generateImage(shot.id)}
               >
                 <RefreshCw className="size-3.5" />
@@ -173,7 +175,7 @@ function ShotCard({ shot, beat }: { shot: EditorShot; beat: EditorBeat }) {
                 variant="outline"
                 size="sm"
                 className="flex-1"
-                disabled={!shot.imagePath || shot.clipStatus === "generating"}
+                disabled={!shot.imagePath || isGenerating}
                 onClick={() => generateClip(shot.id)}
               >
                 <Clapperboard className="size-3.5" />
@@ -214,8 +216,8 @@ export function StoryboardView() {
 
       {/* Card grid */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {ordered.map((shot) => (
-          <ShotCard key={shot.id} shot={shot} beat={beatById.get(shot.beatId!)!} />
+        {ordered.map((shot, index) => (
+          <ShotCard key={shot.id} shot={shot} beat={beatById.get(shot.beatId!)!} index={index} />
         ))}
       </div>
     </div>
