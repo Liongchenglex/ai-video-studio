@@ -191,9 +191,11 @@ export const shots = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     sortOrder: integer("sort_order").notNull(),
 
-    // ── Position on the global project timeline ──
-    startSeconds: integer("start_seconds").notNull(),
-    endSeconds: integer("end_seconds").notNull(),
+    // ── DEPRECATED v3.0 absolute position — superseded by beatId +
+    // startInBeat/endInBeat. Nullable during Phase 2; dropped at the end
+    // of the phase (see the teardown task). Do not write in new code. ──
+    startSeconds: integer("start_seconds"),
+    endSeconds: integer("end_seconds"),
 
     // Cached VO fragment covering this time range (display/reference only)
     text: text("text"),
