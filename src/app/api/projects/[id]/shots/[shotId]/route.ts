@@ -2,11 +2,12 @@
  * PATCH  /api/projects/[id]/shots/[shotId] — update bounds and/or prompts
  * DELETE /api/projects/[id]/shots/[shotId] — remove a shot
  *
- * PATCH validates overlaps and re-derives cached VO text when bounds change.
+ * PATCH validates overlaps against other shots in the same beat when
+ * bounds change (v4.0 beat-relative model).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, shots } from "@/lib/db/schema";
+import { projects, shots, beats } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   getSession,
@@ -17,7 +18,7 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
-import { deriveVOText } from "@/lib/vo-text";
+import { MIN_SHOT_SECONDS } from "@/lib/shot-beat-mapping";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
 
@@ -54,8 +55,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (!project || !shot) return notFoundResponse();
 
   let body: Partial<{
-    startSeconds: number;
-    endSeconds: number;
+    startInBeat: number;
+    endInBeat: number;
     imagePrompt: string;
     motionPrompt: string;
   }>;
@@ -67,35 +68,46 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const updates: Record<string, unknown> = {};
   const boundsChanged =
-    body.startSeconds !== undefined || body.endSeconds !== undefined;
+    body.startInBeat !== undefined || body.endInBeat !== undefined;
 
   if (boundsChanged) {
-    const newStart = body.startSeconds ?? shot.startSeconds;
-    const newEnd = body.endSeconds ?? shot.endSeconds;
-    if (newStart < 0 || newEnd <= newStart) {
-      return badRequestResponse("Invalid bounds");
+    if (!shot.beatId) return badRequestResponse("Shot has no beat — run adopt-beats first");
+    const [beat] = await db
+      .select()
+      .from(beats)
+      .where(and(eq(beats.id, shot.beatId), eq(beats.projectId, id)))
+      .limit(1);
+    if (!beat) return notFoundResponse();
+
+    const beatDur = beat.voDurationSeconds ?? 0;
+    const newStart = body.startInBeat ?? shot.startInBeat ?? 0;
+    const newEnd = body.endInBeat ?? shot.endInBeat ?? beatDur;
+    if (
+      !Number.isFinite(newStart) ||
+      !Number.isFinite(newEnd) ||
+      newStart < 0 ||
+      newEnd - newStart < MIN_SHOT_SECONDS ||
+      newEnd > beatDur + 0.05
+    ) {
+      return badRequestResponse("Invalid bounds for this beat");
     }
 
-    // Overlap check against other shots
-    const others = await db
+    const siblings = await db
       .select()
       .from(shots)
-      .where(eq(shots.projectId, id));
-    const overlap = others.find(
-      (s) => s.id !== shotId && s.startSeconds < newEnd && s.endSeconds > newStart,
+      .where(and(eq(shots.projectId, id), eq(shots.beatId, shot.beatId)));
+    const overlap = siblings.find(
+      (s) =>
+        s.id !== shotId &&
+        s.startInBeat != null &&
+        s.endInBeat != null &&
+        s.startInBeat < newEnd &&
+        s.endInBeat > newStart,
     );
-    if (overlap) {
-      return badRequestResponse(
-        `Bounds overlap shot at ${overlap.startSeconds}s–${overlap.endSeconds}s`,
-      );
-    }
+    if (overlap) return badRequestResponse("Bounds overlap another shot in this beat");
 
-    updates.startSeconds = newStart;
-    updates.endSeconds = newEnd;
-    // Re-derive cached VO text for the new range
-    if (project.script && project.durationSeconds) {
-      updates.text = deriveVOText(project.script, project.durationSeconds, newStart, newEnd);
-    }
+    updates.startInBeat = newStart;
+    updates.endInBeat = newEnd;
   }
 
   if (body.imagePrompt !== undefined) {
@@ -120,7 +132,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     .returning();
 
   // sortOrder is not maintained after bounds changes — the UI and API GET
-  // order by startSeconds, so a stale sortOrder is harmless.
+  // order by startInBeat, so a stale sortOrder is harmless.
 
   return NextResponse.json(updated);
 }
