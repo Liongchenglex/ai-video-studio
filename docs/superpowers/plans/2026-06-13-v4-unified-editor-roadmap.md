@@ -18,9 +18,15 @@ one before it.
 | Phase | Plan file | Delivers | Depends on |
 |---|---|---|---|
 | **1. Beat data model + per-beat VO** | `2026-06-13-v4-phase1-beat-data-model-and-vo.md` ✅ written | `beats` + `entities` tables, `shots` gains `beatId` + offsets + `referencedEntityIds`; segmentation; per-beat ElevenLabs VO with prosody-continuity; sequential timing helper; backfill of existing projects | — (foundation) |
-| **2. Unified editor + two views** | _to be written_ | Beat/shot two-layer timeline, inline editable script (re-voices one beat), Timeline⇄Storyboard toggle over one shared store, inspector | Phase 1 |
-| **3. Batch "Generate all"** | _to be written_ | Server-side fan-out for all images/clips, queue + per-item status surfaced in the Storyboard view, retry | Phase 2 |
-| **4. Reference Bible (F-16)** | _to be written_ | `entities` CRUD + multi-view reference-sheet generation, auto-extract + auto-tag, single-entity FLUX conditioning (multi-entity later) | Phase 2 (UI rail) + Phase 1 (`referencedEntityIds`) |
+| **2. Unified editor + two views** | `2026-07-02-v4-phase2-unified-editor.md` ✅ **shipped 2026-07-03** | Beat/shot two-layer timeline, inline editable script (re-voices one beat), Timeline⇄Storyboard toggle over one shared store, inspector; legacy continuous-VO model retired | Phase 1 |
+| **3. Batch "Generate all"** | _to be written_ | Server-side fan-out for all images/clips, queue + per-item status surfaced in the Storyboard view, retry | Phase 2 ✅ |
+| **4. Reference Bible (F-16)** | _to be written_ | `entities` CRUD + multi-view reference-sheet generation, auto-extract + auto-tag, single-entity FLUX conditioning (multi-entity later) | Phase 2 ✅ (UI rail) + Phase 1 (`referencedEntityIds`) |
+
+**Phase 2 docs:** [`docs/feature08/feature.md`](../../feature08/feature.md) ·
+[`docs/feature08/testcase-v4-phase2.md`](../../feature08/testcase-v4-phase2.md) ·
+[`docs/feature08/security-review.md`](../../feature08/security-review.md) (§ "v4.0 Phase 2") ·
+[`docs/feature05/feature.md`](../../feature05/feature.md) ·
+[`docs/feature03/feature.md`](../../feature03/feature.md).
 
 Phases 2–4 are deliberately **not written yet** — their detail will shift based
 on what Phase 1 reveals (e.g. exact beat/shot timing edge cases). Generate each

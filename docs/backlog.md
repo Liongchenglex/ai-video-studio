@@ -434,6 +434,30 @@ re-voice; selection/playhead continuity when toggling views.
 
 ---
 
+### 18. v4.0 Phase 2 drop-deferred items
+
+**Status:** Phase 2 (unified editor) shipped 2026-07-03. These items were
+explicitly scoped out of the plan (`docs/superpowers/plans/2026-07-02-v4-phase2-unified-editor.md`,
+Global Constraints) and remain open:
+
+- **Cross-beat shot drag.** A shot's drag/trim in the Timeline view is
+  clamped to its own beat; moving a shot's visuals into a different beat
+  isn't supported. Revisit alongside #17 above.
+- **Beat add/split/merge UI (spec §8.1).** Editing inside a beat keeps it
+  one beat by design (see #14); creating, splitting, or merging beats
+  themselves has no UI yet.
+- **`adopt-beats` endpoint removed after one-time use.**
+  `src/app/api/projects/[id]/shots/adopt-beats/route.ts` migrated the one
+  existing project's 84 legacy (absolute-timed) shots onto the beat
+  timeline and was deleted once that migration ran (see
+  `docs/feature08/testcase-v4-phase2.md` §8 for the run record). If a
+  similar legacy-shot migration is ever needed again, re-create it from git
+  history (commit `52952ee`) rather than reinventing it.
+
+**Tag:** editor, vo, migration — deferred, not blocking.
+
+---
+
 ## Ops / Dev UX
 
 ### 12. HMR warning on dep-array changes during hot reload
