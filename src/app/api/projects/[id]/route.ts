@@ -170,11 +170,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Script too long (50000 char max)" }, { status: 400 });
     }
     updates.script = body.script;
-    // Any script edit invalidates the existing VO.
-    updates.voiceoverPath = null;
-    updates.voiceoverStatus = "pending";
-    updates.voiceoverTimestamps = null;
-    updates.durationSeconds = null;
   }
 
   if (Object.keys(updates).length === 0) {

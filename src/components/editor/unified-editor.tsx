@@ -1,9 +1,9 @@
 /**
  * Unified directing editor (v4.0 Pillar B, mockup 01).
  *
- * One screen that replaces the old Script + Editor steps. It owns the three
- * entry gates (generate script → voice the script → adopt legacy shots) and,
- * once past them, mounts the shared editor store and renders the whole
+ * One screen that replaces the old Script + Editor steps. It owns the two
+ * entry gates (generate script → voice the script) and, once past them,
+ * mounts the shared editor store and renders the whole
  * directing surface: a top bar (view toggle, counts, transport, voice,
  * recommend), a static "Cast & Locations" left rail (Reference Bible lands
  * later), a center column (video preview → inline script → Timeline or
@@ -24,7 +24,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
 import {
   Play,
   Square,
@@ -126,11 +125,6 @@ export function UnifiedEditor({
         onVoiced={setBeats}
       />
     );
-  }
-
-  // ── Gate 3: beats exist but some shot is not yet adopted onto a beat ──
-  if (initialShots.some((s) => s.beatId === null)) {
-    return <AdoptBeatsGate projectId={projectId} />;
   }
 
   // ── Editor ──
@@ -259,36 +253,6 @@ function VoiceScriptGate({
           </Button>
           {error && <span className="text-sm text-destructive">Voicing failed. Try again.</span>}
         </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Gate 3: adopt legacy shots onto beats ────────────────────────────
-
-function AdoptBeatsGate({ projectId }: { projectId: string }) {
-  const router = useRouter();
-  const ran = useRef(false);
-
-  useEffect(() => {
-    if (ran.current) return;
-    ran.current = true;
-    (async () => {
-      try {
-        await fetch(`/api/projects/${projectId}/shots/adopt-beats`, { method: "POST" });
-      } catch (err) {
-        console.error("[unified-editor] adopt-beats failed:", err);
-      } finally {
-        router.refresh();
-      }
-    })();
-  }, [projectId, router]);
-
-  return (
-    <Card>
-      <CardContent className="flex items-center justify-center gap-3 p-10 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Migrating existing shots onto the beat timeline…
       </CardContent>
     </Card>
   );

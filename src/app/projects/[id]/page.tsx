@@ -104,10 +104,6 @@ export default async function ProjectPage({
     ? await getDownloadUrl(project.stylePreviewPath)
     : null;
 
-  // NOTE: legacy continuous-VO columns (voiceoverPath/durationSeconds) stay
-  // on the row for now; a later task removes them. The unified editor voices
-  // per-beat instead, so the workspace no longer consumes them.
-
   return (
     <div className="min-h-screen bg-background">
       <Navbar user={{ name: session.user.name, email: session.user.email }} />

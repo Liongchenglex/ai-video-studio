@@ -5,10 +5,11 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
+import { projects, beats } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getSession, unauthorizedResponse, badRequestResponse } from "@/lib/api-utils";
 import { generateMusic } from "@/lib/music-generation";
+import { totalDurationSeconds } from "@/lib/beat-timing";
 
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -22,9 +23,10 @@ export async function POST(request: NextRequest) {
     .limit(1);
   if (!project) return badRequestResponse("Project not found");
 
-  const totalDuration = project.durationSeconds;
+  const beatRows = await db.select().from(beats).where(eq(beats.projectId, projectId));
+  const totalDuration = totalDurationSeconds(beatRows);
   if (!totalDuration) {
-    return badRequestResponse("Generate voiceover first — music duration is derived from VO length");
+    return badRequestResponse("Voice the script into beats first — music duration is derived from beat VO length");
   }
 
   try {
