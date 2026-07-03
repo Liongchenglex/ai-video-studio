@@ -1,0 +1,462 @@
+/**
+ * Unified-editor shared store (v4.0 Pillar A/B).
+ * One React context owns beats, shots, selection, and view; Timeline,
+ * Storyboard, Script strip, and Inspector are all renderers of this state
+ * — the spec §5 "two views over one source of truth" invariant. All API
+ * mutations live here so no view talks to the network directly.
+ */
+"use client";
+
+import {
+  createContext,
+  useContext,
+  useReducer,
+  useCallback,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { computeBeatOffsets, totalDurationSeconds } from "@/lib/beat-timing";
+
+// ── Types ──
+
+export interface EditorBeat {
+  id: string;
+  sortOrder: number;
+  text: string;
+  voStatus: string;
+  voDurationSeconds: number | null;
+  voUrl: string | null;
+  startSeconds: number; // computed, kept fresh by the reducer
+  endSeconds: number; // computed, kept fresh by the reducer
+}
+
+export interface EditorShot {
+  id: string;
+  beatId: string | null;
+  sortOrder: number;
+  startInBeat: number | null;
+  endInBeat: number | null;
+  imagePrompt: string;
+  motionPrompt: string;
+  imagePath: string | null;
+  imageStatus: string;
+  imageUrl: string | null;
+  clipPath: string | null;
+  clipStatus: string;
+  clipUrl: string | null;
+  clipDurationSeconds: number | null;
+}
+
+export type EditorView = "timeline" | "storyboard";
+
+export type EditorSelection =
+  | { type: "beat"; beatId: string }
+  | { type: "shot"; shotId: string }
+  | { type: "gap"; beatId: string; startInBeat: number; endInBeat: number }
+  | null;
+
+// ── Reducer ──
+
+interface State {
+  beats: EditorBeat[];
+  shots: EditorShot[];
+  view: EditorView;
+  selection: EditorSelection;
+}
+
+type Action =
+  | { type: "setBeats"; beats: EditorBeat[] }
+  | { type: "patchBeat"; beatId: string; patch: Partial<EditorBeat> }
+  | { type: "setShots"; shots: EditorShot[] }
+  | { type: "addShot"; shot: EditorShot }
+  | { type: "patchShot"; shotId: string; patch: Partial<EditorShot> }
+  | { type: "removeShot"; shotId: string }
+  | { type: "setView"; view: EditorView }
+  | { type: "select"; selection: EditorSelection };
+
+function withOffsets(beats: EditorBeat[]): EditorBeat[] {
+  const offsets = computeBeatOffsets(beats);
+  const byId = new Map(offsets.map((o) => [o.id, o]));
+  return [...beats]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((b) => ({
+      ...b,
+      startSeconds: byId.get(b.id)?.startSeconds ?? 0,
+      endSeconds: byId.get(b.id)?.endSeconds ?? 0,
+    }));
+}
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case "setBeats":
+      return { ...state, beats: withOffsets(action.beats) };
+    case "patchBeat":
+      return {
+        ...state,
+        beats: withOffsets(
+          state.beats.map((b) => (b.id === action.beatId ? { ...b, ...action.patch } : b)),
+        ),
+      };
+    case "setShots":
+      return { ...state, shots: action.shots };
+    case "addShot":
+      return { ...state, shots: [...state.shots, action.shot] };
+    case "patchShot":
+      return {
+        ...state,
+        shots: state.shots.map((s) => (s.id === action.shotId ? { ...s, ...action.patch } : s)),
+      };
+    case "removeShot":
+      return {
+        ...state,
+        shots: state.shots.filter((s) => s.id !== action.shotId),
+        selection:
+          state.selection?.type === "shot" && state.selection.shotId === action.shotId
+            ? null
+            : state.selection,
+      };
+    case "setView":
+      return { ...state, view: action.view };
+    case "select":
+      return { ...state, selection: action.selection };
+  }
+}
+
+// ── Context ──
+
+interface EditorContextValue {
+  projectId: string;
+  beats: EditorBeat[];
+  shots: EditorShot[];
+  totalDuration: number;
+  view: EditorView;
+  setView(v: EditorView): void;
+  selection: EditorSelection;
+  select(s: EditorSelection): void;
+  revoiceBeat(beatId: string, text?: string): Promise<void>;
+  createShot(
+    beatId: string,
+    startInBeat: number,
+    endInBeat: number,
+    imagePrompt: string,
+    motionPrompt?: string,
+  ): Promise<void>;
+  updateShot(
+    shotId: string,
+    patch: Partial<Pick<EditorShot, "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
+  ): Promise<void>;
+  deleteShot(shotId: string): Promise<void>;
+  splitShot(shotId: string, atInBeat: number): Promise<void>;
+  generateImage(shotId: string): Promise<void>;
+  generateClip(shotId: string, model?: "ltx" | "hailuo"): Promise<void>;
+  recommendShots(): Promise<void>;
+  recommending: boolean;
+}
+
+const EditorContext = createContext<EditorContextValue | null>(null);
+
+export function EditorProvider(props: {
+  projectId: string;
+  initialBeats: EditorBeat[];
+  initialShots: EditorShot[];
+  children: ReactNode;
+}) {
+  const { projectId, initialBeats, initialShots, children } = props;
+
+  const [state, dispatch] = useReducer(reducer, undefined, () => ({
+    beats: withOffsets(initialBeats),
+    shots: initialShots,
+    view: "timeline" as EditorView,
+    selection: null as EditorSelection,
+  }));
+  const [recommending, setRecommending] = useState(false);
+
+  const totalDuration = useMemo(() => totalDurationSeconds(state.beats), [state.beats]);
+
+  const setView = useCallback((v: EditorView) => dispatch({ type: "setView", view: v }), []);
+  const select = useCallback((s: EditorSelection) => dispatch({ type: "select", selection: s }), []);
+
+  // ── Beat mutations ──
+
+  const revoiceBeat = useCallback(
+    async (beatId: string, text?: string) => {
+      const prevBeat = state.beats.find((b) => b.id === beatId);
+      dispatch({ type: "patchBeat", beatId, patch: { voStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/beats/${beatId}/revoice`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(text !== undefined ? { text } : {}),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] revoice failed:", await res.text());
+          if (prevBeat) {
+            dispatch({ type: "patchBeat", beatId, patch: { voStatus: prevBeat.voStatus } });
+          }
+          return;
+        }
+        const updated = (await res.json()) as Partial<EditorBeat>;
+        // Spread-merge so any client-only fields survive; the response
+        // carries the fresh voUrl + duration, so offsets ripple downstream.
+        dispatch({ type: "patchBeat", beatId, patch: { ...updated, voStatus: "done" } });
+      } catch (err) {
+        console.error("[editor-store] revoice error:", err);
+        if (prevBeat) {
+          dispatch({ type: "patchBeat", beatId, patch: { voStatus: prevBeat.voStatus } });
+        }
+      }
+    },
+    [projectId, state.beats],
+  );
+
+  // ── Shot mutations ──
+
+  const createShot = useCallback(
+    async (
+      beatId: string,
+      startInBeat: number,
+      endInBeat: number,
+      imagePrompt: string,
+      motionPrompt?: string,
+    ) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ beatId, startInBeat, endInBeat, imagePrompt, motionPrompt }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] create shot failed:", await res.text());
+          return;
+        }
+        const shot = (await res.json()) as EditorShot;
+        dispatch({ type: "addShot", shot });
+        dispatch({ type: "select", selection: { type: "shot", shotId: shot.id } });
+      } catch (err) {
+        console.error("[editor-store] create shot error:", err);
+      }
+    },
+    [projectId],
+  );
+
+  const updateShot = useCallback(
+    async (
+      shotId: string,
+      patch: Partial<Pick<EditorShot, "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
+    ) => {
+      const prevShot = state.shots.find((s) => s.id === shotId);
+      dispatch({ type: "patchShot", shotId, patch });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] update shot failed:", await res.text());
+          if (prevShot) dispatch({ type: "patchShot", shotId, patch: prevShot });
+          return;
+        }
+        const updated = (await res.json()) as Partial<EditorShot>;
+        // Spread-merge so client-only fields (imageUrl, clipUrl) survive —
+        // the PATCH response only contains raw DB fields.
+        dispatch({ type: "patchShot", shotId, patch: updated });
+      } catch (err) {
+        console.error("[editor-store] update shot error:", err);
+        if (prevShot) dispatch({ type: "patchShot", shotId, patch: prevShot });
+      }
+    },
+    [projectId, state.shots],
+  );
+
+  const deleteShot = useCallback(
+    async (shotId: string) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          dispatch({ type: "removeShot", shotId });
+        } else {
+          console.warn("[editor-store] delete shot failed:", await res.text());
+        }
+      } catch (err) {
+        console.error("[editor-store] delete shot error:", err);
+      }
+    },
+    [projectId],
+  );
+
+  const splitShot = useCallback(
+    async (shotId: string, atInBeat: number) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/split`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ atInBeat }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] split rejected:", await res.text());
+          return;
+        }
+        const { left, right } = (await res.json()) as { left: EditorShot; right: EditorShot };
+        const original = state.shots.find((s) => s.id === shotId);
+        // The split response rows are raw DB fields — no presigned URLs.
+        // Preserve the original's client-side URLs on the LEFT half, since
+        // the underlying R2 asset didn't move, only the shot bounds
+        // narrowed. The RIGHT half is a brand-new range with no asset yet.
+        const mergedLeft: EditorShot = original
+          ? { ...original, ...left, imageUrl: original.imageUrl, clipUrl: original.clipUrl }
+          : { ...left, imageUrl: null, clipUrl: null };
+        const mergedRight: EditorShot = { ...right, imageUrl: null, clipUrl: null };
+        dispatch({
+          type: "setShots",
+          shots: [...state.shots.filter((s) => s.id !== shotId), mergedLeft, mergedRight],
+        });
+        dispatch({ type: "select", selection: { type: "shot", shotId: mergedRight.id } });
+      } catch (err) {
+        console.error("[editor-store] split error:", err);
+      }
+    },
+    [projectId, state.shots],
+  );
+
+  const generateImage = useCallback(
+    async (shotId: string) => {
+      dispatch({ type: "patchShot", shotId, patch: { imageStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/image`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] image generation failed:", await res.text());
+          dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
+          return;
+        }
+        const data = (await res.json()) as {
+          imagePath: string;
+          imageUrl: string;
+          imageStatus: string;
+        };
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: { imagePath: data.imagePath, imageUrl: data.imageUrl, imageStatus: "done" },
+        });
+      } catch (err) {
+        console.error("[editor-store] image generation error:", err);
+        dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const generateClip = useCallback(
+    async (shotId: string, model: "ltx" | "hailuo" = "ltx") => {
+      const endpoint = model === "hailuo" ? "clip-hailuo" : "clip";
+      dispatch({ type: "patchShot", shotId, patch: { clipStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/${endpoint}`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] clip generation failed:", await res.text());
+          dispatch({ type: "patchShot", shotId, patch: { clipStatus: "failed" } });
+          return;
+        }
+        const data = (await res.json()) as {
+          clipPath: string;
+          clipUrl: string;
+          clipStatus: string;
+          clipDurationSeconds: number;
+        };
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: {
+            clipPath: data.clipPath,
+            clipUrl: data.clipUrl,
+            clipStatus: "done",
+            clipDurationSeconds: data.clipDurationSeconds,
+          },
+        });
+      } catch (err) {
+        console.error("[editor-store] clip generation error:", err);
+        dispatch({ type: "patchShot", shotId, patch: { clipStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const recommendShots = useCallback(async () => {
+    setRecommending(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/shots/recommend`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        console.error("[editor-store] recommend shots server error:", await res.text());
+        return;
+      }
+      const data = (await res.json()) as { shots: EditorShot[] };
+      // The recommend response rows are raw DB fields — no presigned URLs.
+      const shots = data.shots.map((s) => ({ ...s, imageUrl: null, clipUrl: null }));
+      dispatch({ type: "setShots", shots });
+    } catch (err) {
+      console.error("[editor-store] recommend shots fetch failed:", err);
+    } finally {
+      setRecommending(false);
+    }
+  }, [projectId]);
+
+  const value: EditorContextValue = {
+    projectId,
+    beats: state.beats,
+    shots: state.shots,
+    totalDuration,
+    view: state.view,
+    setView,
+    selection: state.selection,
+    select,
+    revoiceBeat,
+    createShot,
+    updateShot,
+    deleteShot,
+    splitShot,
+    generateImage,
+    generateClip,
+    recommendShots,
+    recommending,
+  };
+
+  return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
+}
+
+export function useEditor(): EditorContextValue {
+  const ctx = useContext(EditorContext);
+  if (!ctx) throw new Error("useEditor must be used within an EditorProvider");
+  return ctx;
+}
+
+// ── Pure helpers ──
+
+const BEAT_HUES = [258, 38, 152, 205, 328, 96]; // purple, amber, green, blue, pink, lime — mockup palette
+
+export function beatColor(index: number) {
+  const h = BEAT_HUES[index % BEAT_HUES.length];
+  return {
+    block: `hsl(${h} 45% 38%)`,
+    textUnderline: `hsl(${h} 70% 55%)`,
+  };
+}
+
+export function absoluteShotRange(
+  shot: EditorShot,
+  beats: EditorBeat[],
+): { start: number; end: number } | null {
+  if (!shot.beatId || shot.startInBeat == null || shot.endInBeat == null) return null;
+  const beat = beats.find((b) => b.id === shot.beatId);
+  if (!beat) return null;
+  return { start: beat.startSeconds + shot.startInBeat, end: beat.startSeconds + shot.endInBeat };
+}

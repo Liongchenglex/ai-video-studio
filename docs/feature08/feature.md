@@ -1,238 +1,343 @@
-# Feature: F-08 Timeline Editor (v3.0 — editor-first product surface)
+# Feature: F-08 Unified Directing Editor (v4.0 Phase 2 — CURRENT)
 
-> **⚠ PLANNED v4.0 EVOLUTION — design approved 2026-06-13.**
-> The sections below document the **current v3.0 implementation** and remain
-> accurate for the code on disk. A major redesign is specced but **not yet
-> built**: see
+> **✅ v4.0 Phase 2 SHIPPED 2026-07-03.** This doc now documents the
+> **unified directing editor** as the current implementation. The v3.0
+> Timeline Editor it replaced (separate Script step + `editor-prototype.tsx`
+> over a continuous project-level voiceover) is retired; its section below
+> is kept only as historical context. Design spec:
 > [`docs/superpowers/specs/2026-06-13-unified-directing-editor-design.md`](../superpowers/specs/2026-06-13-unified-directing-editor-design.md).
-> Headline changes when v4.0 lands — update this doc then:
-> - **Unified editor:** the separate VO step folds in; script is editable in
->   place. One screen for writing + voicing + storyboarding.
-> - **Two-layer timeline:** **beats** (own their text + VO clip) over
->   **shots** (visuals under a beat). `shots` gains `beatId`, offset-in-beat
->   timing, and `referencedEntityIds` (see F-16).
-> - **Two views over one shared store:** Timeline (timing) ⇄ Storyboard
->   (scannable card grid + batch-review). This realizes backlog **#9**.
-> - **"Generate all"** batch directing flow replaces the one-shot-at-a-time grind.
-> - **Reference Bible** left rail for character/setting consistency (**F-16**).
+> Plan executed: [`docs/superpowers/plans/2026-07-02-v4-phase2-unified-editor.md`](../superpowers/plans/2026-07-02-v4-phase2-unified-editor.md).
 
 ## Feature
-- **Name:** Timeline Editor
-- **Purpose:** Full-page workspace where the user places shots on a
-  timeline over the project voiceover. Each shot is a user-defined time
-  range paired with an image prompt, a motion prompt, a generated image
-  (FLUX.1 Kontext), and an animated clip (LTX-2.3 or Hailuo 02). The editor
-  is the core product surface for v3.0 — it replaced both the old Visuals
-  and Assembly steps.
+- **Name:** Unified Directing Editor
+- **Purpose:** One screen — replacing the old separate Script and Editor
+  stepper steps — where the user reads/edits the script inline, watches
+  narration and shots stack on a two-layer beat/shot timeline (or a
+  Storyboard card grid, same data), and generates images/clips per shot.
+  The stepper shrank to **Concept → Style → Editor**.
 
 ## Scope of this doc
 
-F-08 absorbs work that was previously spread across:
-- v2.0 "Visuals" step (per-scene image + clip preview)
-- v2.0 "Editor" step (timeline mockup)
-- v2.0 Assembly feature (Shotstack render) — still pending in v3.0; this
-  feature.md covers the editor UX only. A separate feature.md for Final
-  Render will exist when F-08 rendering is built.
+F-08 now covers:
+- The two-layer **beat/shot timeline** and its peer, the **Storyboard**
+  view — both renderers over one shared client store.
+- The **inline editable script strip** (re-voices only the beat you touch —
+  see F-05 for the voicing mechanics).
+- Beat-relative shot CRUD, split, and recommend.
+- The editor's two entry gates (generate script → voice the script) and the
+  "Cast & Locations" left-rail placeholder for the F-16 Reference Bible
+  (Phase 4 — not built yet).
+
+Batch "Generate all" (Phase 3) and the Reference Bible itself (Phase 4) are
+explicitly **out of scope** — see "Deferred to Phase 3/4" below.
 
 ## Key Files
 
-Frontend:
-- `src/components/step-editor.tsx` — the stepper node. VO-gate before the
-  editor is usable; renders `EditorPrototype` once VO is ready.
-- `src/components/editor-prototype.tsx` — the entire editor component.
-  Timeline, playhead, clip blocks, drag/trim interactions, Recommend
-  button, shot edit / gap create side panel, main video preview synced to
-  playhead.
-- `src/components/project-workspace.tsx` — orchestrator; owns
-  `shots: ShotData[]`, all shot CRUD handlers, `generateShotImage`,
-  `generateShotClip` (both LTX and Hailuo variants), and the
-  `handleRecommendShots` entry point.
+Frontend — `src/components/editor/`:
+- `editor-store.tsx` — `EditorProvider` + `useEditor()`. The single source
+  of truth: beats, shots, selection, active view. Every API mutation
+  (revoice, shot create/update/delete/split, image/clip generation,
+  recommend) lives here as an action; no other component talks to the
+  network directly. The reducer recomputes every beat's absolute
+  `startSeconds`/`endSeconds` (via `computeBeatOffsets`) whenever beats
+  change, so a re-voiced beat's new duration ripples automatically to every
+  later beat and to the project total. Also exports `beatColor(index)`
+  (cycling accent colors shared between the script strip and timeline beat
+  blocks) and `absoluteShotRange(shot, beats)` (beat-relative → absolute
+  seconds).
+- `use-beat-playback.ts` — `useBeatPlayback(beats)`. Sequential per-beat
+  `<audio>` playback: plays beat N's clip, chains into beat N+1 on `ended`,
+  preloads the next beat's audio for a tight seam, skips beats with no
+  `voUrl` (unvoiced/failed), and exposes one global playhead in absolute
+  timeline seconds (`play`, `pause`, `seek`).
+- `timeline-view.tsx` — the two-layer timeline: `BEATS` row (one block per
+  beat, colored by `beatColor`, spinner while `voStatus: "generating"`,
+  red border on `"failed"`), `SHOTS` row (drag/trim persisted as
+  beat-relative offsets, clamped to the shot's own beat — cross-beat drag is
+  deferred), `VOICE` row (a slim per-beat audio bar). Click-to-select,
+  ruler + playhead drag, keyboard `S` (split) / `Del` (delete).
+- `storyboard-view.tsx` — responsive card grid, one card per shot ordered by
+  `(beat.sortOrder, startInBeat)`. Each card shows the clip/image thumbnail,
+  a status badge, the shot's image prompt, the parent beat's narration
+  (clamped), and per-card Re-image/Clip/Retry/Edit actions.
+- `script-strip.tsx` — renders every beat's text as a colored, clickable
+  segment; double-click to edit inline; Enter commits (exactly once — see
+  test cases), Escape cancels with no request sent. Committing calls
+  `revoiceBeat(beatId, text)`.
+- `inspector.tsx` — one panel, three states driven by `selection`: shot
+  panel (prompt fields, image/clip preview + generation buttons, split/
+  delete), beat panel (read-only text preview, voice status, re-voice/play
+  actions), gap panel (create-shot form for an empty range within a beat).
+  No selection → the playhead-shot preview.
+- `unified-editor.tsx` — the shell. Owns the two entry gates (below), the
+  top bar (view toggle, beat/shot counts, total duration, play/stop, voice
+  selector, Recommend), the static Cast & Locations left rail, the center
+  column (video preview → script strip → Timeline/Storyboard), and the
+  sticky right Inspector.
+
+Frontend — orchestration:
+- `src/components/project-workspace.tsx` — now a **3-step** stepper
+  (Concept → Style → Editor, down from 4); owns brief/style state only —
+  script, voiceover, and shot state all moved into `editor-store.tsx`.
+- `src/app/projects/[id]/page.tsx` — loads beats server-side (presigned
+  `voUrl`, `computeBeatOffsets` for absolute times) alongside shots, and
+  passes both through as `initialBeats`/`initialShots`.
 
 Backend:
-- `src/lib/shot-recommendation.ts` — two-stage shot recommendation.
-  Stage 1: deterministic script split at punctuation boundaries under a
-  char-per-second cap derived from the actual VO duration. Stage 2:
-  Claude Sonnet 4.5 generates one image prompt per fragment; motion
-  prompts default to a placeholder.
-- `src/lib/shot-timing.ts` — (deleted in the pivot; functionality inlined
-  into `shot-recommendation.ts`'s `assignTimings`).
-- `src/lib/vo-text.ts` — `deriveVOText(script, totalDurationSeconds, start, end)`:
-  proportional char-to-second mapping used to derive the VO fragment that
-  plays during a given shot's time range.
-- `src/lib/image-generation.ts` — `generateImage(r2Key, stillImagePrompt, styleString)`.
-  Used by the shot image endpoint.
-- `src/app/api/projects/[id]/shots/**` — all shot CRUD + asset endpoints
-  (see APIs section).
+- `src/lib/beat-timing.ts` — `computeBeatOffsets`, `totalDurationSeconds`
+  (Phase 1; unchanged) — the sequential-stacking math every absolute time in
+  the editor is derived from.
+- `src/lib/shot-beat-mapping.ts` — `MIN_SHOT_SECONDS = 0.25`, the shared
+  minimum-shot-length constant consumed by create/update/split.
+- `src/lib/shot-recommendation.ts` — `recommendShotsForBeats()`: per-beat
+  deterministic fragment splitting (proportional char-to-time mapping
+  within each beat) + one Claude-written image prompt per fragment.
+- `src/app/api/projects/[id]/beats/route.ts` — `GET`, lists beats with
+  presigned audio + absolute offsets.
+- `src/app/api/projects/[id]/beats/generate/route.ts` — segments the script
+  into beats and voices each (Phase 1).
+- `src/app/api/projects/[id]/beats/[beatId]/revoice/route.ts` — re-voices
+  one beat; **Phase 2 addition:** accepts an optional `{ text }` body
+  (≤2,000 chars) to edit the beat's words before voicing.
+- `src/app/api/projects/[id]/shots/route.ts` — `POST`, beat-relative create.
+- `src/app/api/projects/[id]/shots/[shotId]/route.ts` — `PATCH` (offsets
+  and/or prompts) / `DELETE`.
+- `src/app/api/projects/[id]/shots/[shotId]/split/route.ts` — split at
+  `atInBeat`.
+- `src/app/api/projects/[id]/shots/recommend/route.ts` — replaces all shots
+  with per-beat recommended rows.
+- `src/app/api/projects/[id]/shots/[shotId]/{image,clip,clip-hailuo}/route.ts`
+  — unchanged asset-generation endpoints (still per-shot, still synchronous).
+
+**Removed in this phase:** `src/components/step-script.tsx`,
+`src/components/step-editor.tsx`, `src/components/editor-prototype.tsx`,
+`src/app/api/projects/[id]/shots/adopt-beats/route.ts` (one-time migration
+endpoint, removed after the 84 legacy shots on the one existing project were
+adopted — see `docs/backlog.md` if it's ever needed again).
 
 ## Data Models
 
-**`shots` table (v3.0 shape).** Attaches directly to projects; the
-`scenes` layer was removed during the pivot.
+**`shots` table (v4.0 Phase 2 shape).** Legacy absolute columns
+(`startSeconds`, `endSeconds`, `text`) are **dropped** (not just nullable —
+the additive-first migration convention completed its teardown this phase).
 
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid | PK |
 | projectId | uuid (FK cascade) | |
-| sortOrder | integer | monotonic only; actual order is `startSeconds` |
-| startSeconds | integer NOT NULL | position on the project timeline |
-| endSeconds | integer NOT NULL | must be > startSeconds |
-| text | text | cached VO fragment for display (derived from `projects.script` + bounds) |
-| imagePrompt | text NOT NULL | subject + composition; no colors/style per v3.0 rules |
-| motionPrompt | text NOT NULL | subject action + subtle camera |
-| imagePath | text | R2 key of the generated still |
-| imageStatus | enum | pending / generating / done / failed |
-| clipPath | text | R2 key of the generated clip (LTX or Hailuo) |
-| clipStatus | enum | pending / generating / done / failed |
-| clipDurationSeconds | integer | measured from the clip output |
+| sortOrder | integer | monotonic only; actual order is beat sortOrder + `startInBeat` |
+| **beatId** | uuid (FK cascade → `beats.id`) | nullable at the column level (additive-first), but every reachable code path requires it — a shot with no beat can't be created, and the migration that back-filled `beatId` for pre-Phase-2 shots has run |
+| **startInBeat** | double precision | offset in seconds from the parent beat's start; source of truth for shot timing |
+| **endInBeat** | double precision | must be `> startInBeat`, `≤ beat.voDurationSeconds + 0.05` |
+| imagePrompt | text NOT NULL | subject + composition; ≤2,000 chars |
+| motionPrompt | text NOT NULL | subject action + subtle camera; ≤2,000 chars |
+| imagePath / imageStatus | text / enum | unchanged from v3.0 |
+| clipPath / clipStatus / clipDurationSeconds | text / enum / integer | unchanged from v3.0 |
+| referencedEntityIds | jsonb, default `[]` | F-16 tagging column, unused until Phase 4 |
 | createdAt / updatedAt | timestamp | |
 
-Index: `shots_project_id_sort_order_idx` on (projectId, sortOrder).
+No more `shots.text` cache — narration is always the parent beat's `text`.
+
+**`beats` table (Phase 1, unchanged this phase).** See F-05's feature doc
+for the full shape; Phase 2 only adds the optional-text-edit path onto the
+existing revoice endpoint.
+
+**`projects` table.** The continuous-VO fields — `voiceoverPath`,
+`voiceoverStatus`, `voiceoverTimestamps`, `durationSeconds` — are **dropped**
+this phase. `voiceId` is retained (still selects the ElevenLabs voice used
+for `beats/generate` and revoice).
 
 ## APIs
 
 All routes are auth-required and ownership-scoped via a join from
-`shots → projects` where `projects.userId === session.user.id`.
+`shots`/`beats` → `projects` where `projects.userId === session.user.id`.
+Any endpoint accepting a `beatId` additionally verifies
+`beat.projectId === project.id` before use (closes a cross-project IDOR —
+see the security section below).
 
-### Shot CRUD
-- `POST /api/projects/:id/shots` — create a shot in an empty gap. Rejects
-  on overlap.
-- `PATCH /api/projects/:id/shots/:shotId` — update bounds and/or prompts.
-  Re-validates overlap on bounds change; re-derives cached `text` from
-  the new range.
-- `DELETE /api/projects/:id/shots/:shotId` — delete a shot.
-- `POST /api/projects/:id/shots/:shotId/split` — split at `atSeconds`;
-  left half reuses the existing row with new `endSeconds`, right half is
-  a fresh row that inherits prompts + imagePath + clipPath.
+### Shot CRUD (beat-relative)
+- `POST /api/projects/:id/shots` — body
+  `{ beatId, startInBeat, endInBeat, imagePrompt, motionPrompt? }`. Rejects
+  on overlap **within the same beat**, on offsets outside `[0,
+  beat.voDurationSeconds + 0.05]`, on a `beatId` not owned by the project,
+  and on a non-string/over-length `imagePrompt`.
+- `PATCH /api/projects/:id/shots/:shotId` — any of `{ startInBeat?,
+  endInBeat?, imagePrompt?, motionPrompt? }`. Re-validates overlap (within
+  the shot's beat) on bounds change.
+- `DELETE /api/projects/:id/shots/:shotId` — unchanged.
+- `POST /api/projects/:id/shots/:shotId/split` — body `{ atInBeat }`;
+  `atInBeat` must leave ≥0.25s on each side; right half inherits prompts +
+  `imagePath`/`clipPath` from the original.
 
-### Recommend + Suggest
-- `POST /api/projects/:id/shots/recommend` — replaces all existing shots.
-  Uses `src/lib/shot-recommendation.ts`; see that file for the two-stage
-  architecture.
-- `POST /api/projects/:id/shots/suggest-image` — Haiku generates one image
-  prompt for the given `voText`. Used by the "AI suggest" button next to
-  the image prompt field in both shot-edit and gap-create forms.
-- `POST /api/projects/:id/shots/suggest-motion` — Haiku generates one motion
-  prompt. Requires both `voText` and `imagePrompt` so the motion fits the
-  actual visual. Disabled in the UI until an image prompt exists.
+### Recommend
+- `POST /api/projects/:id/shots/recommend` — replaces all existing shots
+  with rows computed per-beat by `recommendShotsForBeats()`. Requires at
+  least one beat with `voStatus: "done"`.
 
-### Asset generation per shot (synchronous, server awaits fal.ai)
-- `POST /api/projects/:id/shots/:shotId/image` — FLUX.1 Kontext. ~20–30s.
-- `POST /api/projects/:id/shots/:shotId/clip` — LTX-2.3. ~60–120s.
-- `POST /api/projects/:id/shots/:shotId/clip-hailuo` — MiniMax Hailuo 02
-  Standard 768p. A/B test alternative. ~60–90s. Writes to a distinct R2
-  key (`clip-hailuo.mp4`); shot.clipPath points at whichever was
-  generated last.
+### Beat voicing (Phase 1, extended)
+- `POST /api/projects/:id/beats/:beatId/revoice` — **new in Phase 2:**
+  optional body `{ text?: string }`. When present: trimmed, 1–2,000 chars,
+  replaces `beats.text` before re-voicing. Absent/empty body re-voices the
+  existing text unchanged.
 
 ## State & Ownership
 
-- **Source of truth:** Neon `shots` table + R2 assets.
-- **Client state:** `ProjectWorkspace.shots` is the canonical client
-  mirror; `EditorPrototype` keeps an internal sibling (`shots`) synced via
-  `useEffect(() => setShots(propShots), [propShots])` and persists
-  changes back to the server on drag-end, blur, or button click.
-- **Mutation flow:** endpoint → database → response with the canonical row
-  → client merges server fields onto its local copy with spread
-  (`{ ...s, ...updated }`) so presigned URLs survive.
+- **Source of truth:** Neon `beats` + `shots` tables + R2 assets. Shot
+  timing is **beat-relative only** — `startInBeat`/`endInBeat` are the only
+  numbers ever written; absolute timeline seconds are *always* computed
+  on read via `computeBeatOffsets` (`beat-timing.ts`) + `absoluteShotRange`
+  (`editor-store.tsx`). No code path stores an absolute second value.
+- **Client state:** `editor-store.tsx`'s `useReducer` state (beats, shots,
+  selection, view) is the single client-side mirror. Timeline, Storyboard,
+  Script strip, and Inspector are four renderers of this one state — none
+  of them fetch independently or keep a sibling copy (this is the "two
+  views over one shared store" invariant from the design spec §5).
+- **Mutation flow:** store action → optimistic patch → `fetch` → spread-merge
+  the server response onto local state (so presigned URLs and other
+  client-only derived fields survive) → revert + `console.warn` on failure.
+- **Ripple:** editing a beat's duration (via revoice) never touches shot
+  rows — because shot offsets are beat-relative, they're automatically
+  correct after the beat's `voDurationSeconds` changes; only the *derived*
+  absolute positions of that beat and every later beat change, which the
+  reducer recomputes for free.
 
 ## Security
 
-- **Auth required:** every endpoint.
-- **Ownership:** shot mutations join `shots → projects` and filter by
-  `projects.userId`. Direct-by-id shot access that bypasses the project
-  ownership check is impossible.
-- **Rate limiting:** `generation` preset (5/min) on all generative
-  endpoints (image, clip, clip-hailuo, suggest-image, suggest-motion,
-  recommend). `mutation` preset (30/min) on CRUD endpoints.
-- **CSRF:** Origin header verification on all mutations.
+- **Auth required:** every endpoint (`getSession()` → 401).
+- **Ownership:** every shot/beat query joins to `projects` and filters by
+  `projects.userId`.
+- **Cross-table authorization:** any endpoint accepting a `beatId` verifies
+  `beat.projectId === project.id` before use — this is what closes the
+  cross-project IDOR that an independent review flagged and confirmed fixed
+  (see `security-review.md`, "v4.0 Phase 2" section).
+- **Rate limiting:** `generation` preset (5/min) on revoice and recommend;
+  `mutation` preset (30/min) on shot create/update/delete/split.
+- **CSRF:** Origin header verification (`verifyCsrf()`) on every mutation,
+  fail-closed.
 - **Input validation:**
   - UUIDs validated on all path params.
-  - Bounds must satisfy `0 <= startSeconds < endSeconds`.
-  - Non-empty imagePrompt required on create.
-  - Overlap with other shots rejected.
-  - Split `atSeconds` must leave ≥ 1s on each side.
-- **Error handling:** server logs full error detail; client sees generic
-  messages. Failed generation calls flip `imageStatus`/`clipStatus` to
-  `failed` so the UI can surface a retry affordance without leaking the
-  reason.
-- **Secrets:** `FAL_KEY` (fal.ai) and `ANTHROPIC_API_KEY` (Claude) are
-  server-side only; never exposed to the client bundle.
-- **R2 access:** all image + clip URLs are time-limited presigned; R2
-  bucket is private.
+  - Beat-relative offsets: `Number.isFinite`, `startInBeat ≥ 0`,
+    `endInBeat - startInBeat ≥ MIN_SHOT_SECONDS (0.25)`,
+    `endInBeat ≤ beat.voDurationSeconds + 0.05`.
+  - Overlap-with-siblings check scoped **per beat**, not per project.
+  - `imagePrompt`/`motionPrompt`: typed (`typeof === "string"`) before
+    `.trim()`, non-empty on create, capped at **2,000 characters** (closes
+    security finding F3 — a non-string value previously threw an uncaught
+    `TypeError` and produced a 500; lengths were previously unbounded).
+  - Revoice `{ text }`: typed, trimmed, 1–2,000 characters.
+  - Malformed JSON bodies → 400 everywhere.
+- **Error handling:** generic client-facing messages; detail logged
+  server-side only (closes security finding F1 — `shots/recommend`
+  previously returned raw `error.message`).
+- **Secrets:** unchanged — `FAL_KEY`, `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`
+  server-side only.
+- **R2 access:** unchanged — time-limited presigned URLs, private bucket.
+- **Full independent review:** see `docs/feature08/security-review.md` §
+  "v4.0 Phase 2 (2026-07-03)" — verdict SHIP WITH FIXES, all three findings
+  (F1, F2, F3) fixed in commit `4ab994b` before merge.
 
 ## Dependencies
 
-- **External services:**
-  - Anthropic API (Claude Sonnet 4.5 for Recommend, Haiku 4.5 for suggest).
-  - fal.ai (FLUX.1 Kontext for images, LTX-2.3 for clips, MiniMax Hailuo
-    02 Standard for A/B clip test).
-  - Cloudflare R2 for asset storage.
-- **Libraries:**
-  - `@anthropic-ai/sdk`
-  - `@fal-ai/client`
-  - `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`
-  - `wavesurfer.js` — NOT currently a dep; waveform is rendered as a
-    simple colored bar in the prototype. Full waveform will be added
-    when we swap the prototype for the real editor.
-- **Shared utilities:**
-  - `src/lib/api-utils.ts` — session, CSRF, rate-limit, validation.
-  - `src/lib/r2.ts` — R2 client + `getDownloadUrl()` for presigned GET.
-  - `src/lib/vo-text.ts` — script → VO text slicing by time bounds.
+- **External services:** Anthropic API (Claude Sonnet 4.5 for Recommend),
+  ElevenLabs (per-beat VO, via `beat-voiceover-generation.ts` — see F-05),
+  fal.ai (FLUX.1 Kontext, LTX-2.3, Hailuo — unchanged), Cloudflare R2.
+- **Libraries:** unchanged from v3.0 (`@anthropic-ai/sdk`, `@fal-ai/client`,
+  `@aws-sdk/client-s3` + presigner). **No new npm dependencies this
+  phase** — the shared store is plain React context + `useReducer`.
+- **Shared utilities:** `src/lib/api-utils.ts`, `src/lib/r2.ts`,
+  `src/lib/beat-timing.ts`, `src/lib/shot-beat-mapping.ts`.
 
 ## Coding Patterns Used
 
-- **Two-stage recommendation:** deterministic text split first, then
-  Claude for creative prompts only. Avoids text-drift hallucinations
-  (Claude can duplicate or drop sentences when asked to both split AND
-  prompt in one shot).
-- **Proportional char-to-time mapping:** accurate enough for ±1s
-  boundaries on typical narrations; avoids the cost and fragility of
-  mapping ElevenLabs character timestamps directly.
-- **Optimistic local state + persist on interaction-end:** drag moves
-  update `shots` every mousemove (instant visual feedback); only the
-  final mouseup triggers the PATCH.
-- **Spread-merge for server responses:** client always does
-  `{ ...s, ...updated }` rather than `updated` wholesale, because server
-  responses lack client-only derived fields like `imageUrl` and `clipUrl`
-  (those are computed post-fetch in the GET path).
-- **Playhead-driven preview:** main video preview always follows
-  `playheadShot` (the shot under the playhead), never `selectedShot`.
-  Selection is for editing, playhead is for playback.
-- **Selection-aware side panel:** one panel serves three states —
-  shot-selected (edit mode), gap-selected (create mode), nothing
-  selected (playhead-driven preview).
-- **Image vs clip preview toggle:** when both exist on a shot, the side
-  panel has tabs; auto-switches to whichever was just regenerated so
-  results are always visible.
+- **One store, many renderers:** `editor-store.tsx` is the only place that
+  talks to the network; Timeline/Storyboard/Script-strip/Inspector are pure
+  consumers of `useEditor()`. This is what makes selection, mutations, and
+  playback state automatically consistent across the view toggle (verified
+  in test cases §7).
+- **Beat-relative-only timing:** no code path ever writes an absolute
+  second value for a shot; absolute time is always *derived*
+  (`computeBeatOffsets` + `absoluteShotRange`), so a beat duration change
+  ripples for free instead of requiring a re-write of every later shot.
+- **Sequential audio chaining with preload:** `useBeatPlayback` plays one
+  `<audio>` element per beat and starts loading the *next* beat's clip while
+  the current one is still playing, keeping the cross-beat seam tight; it
+  also transparently skips unvoiced/failed beats rather than pausing.
+  Hardened iteratively (commits `235710c` et al.) after early versions
+  stalled on a skip chain or dropped the preloaded element.
+- **Cross-table authorization as a first-class rule:** every route that
+  accepts a `beatId` re-derives it must belong to the requesting project —
+  called out explicitly in the plan's Global Constraints and confirmed by
+  the independent security review.
+- **Optimistic local state + spread-merge on response:** ported from
+  `editor-prototype.tsx`'s pattern (`{ ...local, ...serverResponse }`) so
+  client-only derived fields (presigned URLs) survive a mutation response.
+- **Guarded double-commit on inline edit:** the script strip's Enter/blur
+  interplay initially fired two revoice requests for one edit; fixed with
+  an explicit commit guard (see test case TC-1.7 and commits
+  `f0b0ff0`/`fc7eb1f`).
 
-## Tradeoffs
+## Tradeoffs / Debt
 
-- **No Inngest orchestration yet.** All generation is synchronous. Works
-  for single-shot clicks but awkward for parallel batch generation.
-  Deferred; will re-evaluate once user tries to bulk-generate.
-- **Waveform is a colored bar, not a real waveform.** Sufficient for
-  scrubbing in prototype; replace with wavesurfer.js when the editor
-  graduates from "prototype".
-- **Shot text doesn't refresh in local state after drag-resize.** Known
-  bug; see backlog #1. The R2 text column updates server-side but the
-  client mirror stays stale until page reload. Fixing it introduced drag
-  flicker; deferred.
-- **sortOrder not maintained after mutations.** Monotonic on insert;
-  mutations leave it stale. UI and GET both order by `startSeconds`, so
-  this is fine in practice — documented only to prevent future confusion.
-- **Hailuo A/B button stays in the UI.** Low ongoing cost, useful for
-  non-character shots; revisit when multi-keyframe feature (backlog #8)
-  subsumes model selection.
-- **No character / setting consistency across shots.** The biggest
-  remaining quality gap. Tracked in backlog #7a (entity reference images)
-  as the planned fix.
-- **No undo/redo.** Destructive operations are one-way. Backlog #2.
-- **Per-shot Inngest not used — sync calls only.** Fine for now; could
-  cause UI lockups if a user wanted to queue 60 image generations in
-  parallel. Use Inngest if that flow becomes real.
+- **No cross-beat shot drag.** A shot's drag/trim is clamped to its own
+  beat; moving a shot's visuals into a different beat isn't supported yet.
+  **Deferred to a later phase** (spec §8.1).
+- **No beat add/split/merge UI.** Editing inside a beat keeps it one beat
+  (design decision, spec §8.1/backlog #14) — creating/splitting/merging
+  beats themselves is not exposed in the UI.
+- **No batch "Generate all."** Deferred to Phase 3 — images/clips are still
+  generated one shot at a time from the Inspector or a Storyboard card.
+- **No Reference Bible.** The left rail is a static placeholder; F-16
+  (character/location consistency) is Phase 4.
+- **Asset generation is still synchronous per shot.** Unchanged tradeoff
+  from v3.0 — see the historical section below.
+- **No undo/redo.** Unchanged from v3.0.
+- **Waveform per beat is a colored bar, not a real waveform.** Unchanged
+  tradeoff, now scoped per-beat instead of per-project.
+
+## Deferred to Phase 3 / Phase 4
+
+Per the v4.0 roadmap and design spec §8, explicitly **not built** in this
+phase:
+- **Phase 3 — Batch "Generate all":** server-side fan-out for all
+  images/clips with per-item status in the Storyboard view, plus retry.
+- **Phase 4 — Reference Bible (F-16):** `entities` CRUD, multi-view
+  reference-sheet generation, auto-extract/auto-tag, FLUX conditioning.
+  `shots.referencedEntityIds` exists as a column but is unused until then.
+- Beat add/split/merge UI, cross-beat shot drag, sub-beat narration slicing
+  (a shot's narration is always its whole parent beat's text).
+
+---
+
+## Historical: v3.0 Timeline Editor (retired)
+
+The section below documents the **v3.0 implementation that this phase
+replaced.** Kept for historical reference only — do not use these file
+paths or data shapes; they no longer exist on disk.
+
+- **Frontend:** `step-editor.tsx` (VO-gate + stepper node),
+  `editor-prototype.tsx` (single-file editor: continuous timeline, playhead,
+  clip blocks, drag/trim, Recommend, side panel), `project-workspace.tsx`
+  (owned `shots: ShotData[]` directly).
+- **Data model:** `shots.startSeconds`/`endSeconds` (absolute project-timeline
+  seconds), `shots.text` (cached VO fragment derived from
+  `projects.script` + bounds), `projects.voiceoverPath` +
+  `voiceoverStatus` + `voiceoverTimestamps` + `durationSeconds` (one
+  continuous voiceover per project).
+- **Why it was replaced:** a continuous VO meant any script edit forced a
+  whole-project re-bake and left shot timestamps orphaned relative to the
+  new audio (tracked as backlog #10 under v3.0). The beat model makes
+  editing one line of narration a scoped, ~1s operation instead.
+- **What was preserved through the migration:** every v3.0 shot's
+  `imagePath`/`clipPath` (generated images and clips) carried over
+  unchanged — the one-time adoption endpoint (now removed) only computed
+  new `beatId`/`startInBeat`/`endInBeat`, never touched asset paths.
 
 ## Known incomplete items referenced by this feature
 
-- Backlog #1 — stale shot.text after drag-resize
-- Backlog #7a — entity reference images (character/setting consistency)
-- Backlog #8 — multi-keyframe transformation clips
-- Backlog #2 — undo/redo
+- Backlog: "v4.0 Phase 2 drop-deferred" entry (cross-beat shot drag, beat
+  add/split/merge UI, adopt-beats endpoint removal note) — see
+  `docs/backlog.md`.
+- Backlog #7a / F-16 — Reference Bible (Phase 4).
+- Backlog #8 — multi-keyframe transformation clips (unaffected by this
+  phase).
+- Backlog #2 — undo/redo (unaffected by this phase).

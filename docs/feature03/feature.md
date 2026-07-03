@@ -1,21 +1,38 @@
-# Feature: F-03 Script Generation (v3.0 — plain text)
+# Feature: F-03 Script Generation (v4.0 Phase 2 — generation in setup, beats own editing)
 
-> **⚠ PLANNED v4.0 EVOLUTION — design approved 2026-06-13.**
-> The sections below document the **current v3.0 implementation** and remain
-> accurate for the code on disk. A redesign is specced but **not yet built**:
-> see
-> [`docs/superpowers/specs/2026-06-13-unified-directing-editor-design.md`](../superpowers/specs/2026-06-13-unified-directing-editor-design.md).
-> Headline changes — update this doc when they land:
-> - **The separate Script step disappears.** Generation stays in first-run
->   setup (style + brief → script), but editing moves inline into the unified
->   editor — no more `step-script.tsx` textarea screen or Script → Editor
->   stepper hop.
-> - **Beats replace whole-script editing.** The script is segmented into
->   `beats` rows; editing one beat's text re-voices only that beat (the beat
->   data model + segmentation shipped in v4.0 Phase 1).
-> - **Cast & Locations tie-in.** The Reference Bible (F-16) auto-extracts
->   recurring characters/locations/objects from the generated script — see
+> **✅ v4.0 Phase 2 SHIPPED 2026-07-03.** The separate Script step is gone:
+> `step-script.tsx` and the Script → Editor stepper hop are deleted. Script
+> **generation** still happens as the unified editor's first-run gate (style
+> + brief → script, same Claude call as before); script **editing** no
+> longer happens on a whole-script textarea — once the script is segmented
+> into beats (F-08/F-05 Phase 1), editing happens **inline, per beat**, in
+> the editor's script strip, and each edit re-voices only that beat. See
+> [`docs/superpowers/specs/2026-06-13-unified-directing-editor-design.md`](../superpowers/specs/2026-06-13-unified-directing-editor-design.md)
+> for the full design and [`docs/feature08/feature.md`](../feature08/feature.md)
+> for the editor that now hosts this.
+>
+> **What changed vs. the v3.0 implementation documented below:**
+> - Generation: unchanged mechanically (`POST /script/generate`, same
+>   Claude Sonnet 4.5 + web-search call, same `projects.script` persistence)
+>   but the UI trigger moved from a dedicated Script step to
+>   `unified-editor.tsx`'s first gate ("no script → Generate script card").
+>   Regenerating an already-segmented script is intentionally **not**
+>   offered once beats exist — beats own the text from that point on.
+> - Editing: `PATCH /api/projects/:id` with a whole `script` field is no
+>   longer how users edit narration day-to-day — see F-05/F-08 for the
+>   per-beat edit path (`POST /beats/:beatId/revoice` with `{ text }`).
+>   The whole-script PATCH still exists at the API level (used once, right
+>   after generation, before beats exist) but the textarea UI that drove it
+>   (`step-script.tsx`) is deleted.
+> - **Cast & Locations tie-in still pending.** The Reference Bible (F-16)
+>   auto-extract from the script is **Phase 4**, not built yet — see
 >   [`docs/feature16/feature.md`](../feature16/feature.md).
+>
+> The sections below are the original v3.0 documentation and remain
+> accurate for the parts that didn't change (generation mechanics, Claude
+> call, data model). Historical UI references (`step-script.tsx`, the
+> 4-step stepper) describe what has been removed — see F-08's feature doc
+> for the current stepper (Concept → Style → Editor).
 
 ## Feature
 - **Name:** Script Generation

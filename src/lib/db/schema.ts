@@ -129,16 +129,6 @@ export const projects = pgTable(
     // shots are user-defined on the editor timeline instead.
     script: text("script"),
 
-    // ── Voiceover (F-05) — one continuous track per project ──
-    voiceoverPath: text("voiceover_path"),
-    voiceoverStatus: generationStatusEnum("voiceover_status").default("pending"),
-    voiceoverTimestamps: jsonb("voiceover_timestamps").$type<{
-      characters: string[];
-      character_start_times_seconds: number[];
-      character_end_times_seconds: number[];
-    }>(),
-    durationSeconds: integer("duration_seconds"),
-
     // ── Music (F-06) ──
     musicPath: text("music_path"),
     musicStatus: generationStatusEnum("music_status").default("pending"),
@@ -190,13 +180,6 @@ export const shots = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     sortOrder: integer("sort_order").notNull(),
-
-    // ── Position on the global project timeline ──
-    startSeconds: integer("start_seconds").notNull(),
-    endSeconds: integer("end_seconds").notNull(),
-
-    // Cached VO fragment covering this time range (display/reference only)
-    text: text("text"),
 
     imagePrompt: text("image_prompt").notNull(),
     motionPrompt: text("motion_prompt").notNull(),

@@ -1,9 +1,9 @@
 /**
  * POST /api/projects/[id]/shots/[shotId]/split
- * Body: { atSeconds }
- * Splits a shot in two at the given time. Both halves inherit the prompts
- * and image/clip paths of the original; the user can regenerate assets
- * for either half afterwards.
+ * Body: { atInBeat }
+ * Splits a shot in two at the given beat-relative offset. Both halves
+ * inherit the prompts and image/clip paths of the original; the user can
+ * regenerate assets for either half afterwards.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -18,11 +18,10 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
-import { deriveVOText } from "@/lib/vo-text";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
 
-const MIN_HALF_SECONDS = 1;
+const MIN_HALF_SECONDS = 0.25;
 
 export async function POST(request: NextRequest, { params }: Params) {
   const rateLimitError = applyRateLimit(request, "mutation");
@@ -51,48 +50,49 @@ export async function POST(request: NextRequest, { params }: Params) {
     .limit(1);
   if (!shot) return notFoundResponse();
 
-  let body: { atSeconds: number };
+  let body: { atInBeat: number };
   try {
     body = await request.json();
   } catch {
     return badRequestResponse("Invalid request body");
   }
-  const at = Math.round(body.atSeconds);
+  const at = body.atInBeat;
+  const start = shot.startInBeat;
+  const end = shot.endInBeat;
+  if (start == null || end == null || !shot.beatId) {
+    return badRequestResponse("Shot has no beat — run adopt-beats first");
+  }
   if (
     typeof at !== "number" ||
-    at < shot.startSeconds + MIN_HALF_SECONDS ||
-    at > shot.endSeconds - MIN_HALF_SECONDS
+    !Number.isFinite(at) ||
+    at < start + MIN_HALF_SECONDS ||
+    at > end - MIN_HALF_SECONDS
   ) {
     return badRequestResponse(
-      `atSeconds must be between ${shot.startSeconds + MIN_HALF_SECONDS} and ${shot.endSeconds - MIN_HALF_SECONDS}`,
+      `atInBeat must be between ${(start + MIN_HALF_SECONDS).toFixed(2)} and ${(end - MIN_HALF_SECONDS).toFixed(2)}`,
     );
   }
 
-  // Update original to end at the split point
-  const leftText = project.script && project.durationSeconds
-    ? deriveVOText(project.script, project.durationSeconds, shot.startSeconds, at)
-    : null;
   const [left] = await db
     .update(shots)
-    .set({ endSeconds: at, text: leftText })
+    .set({ endInBeat: at })
     .where(eq(shots.id, shotId))
     .returning();
 
-  // Insert the second half. Inherits prompts + existing image/clip paths —
-  // if the user doesn't like the duplication they can regenerate.
-  const rightText = project.script && project.durationSeconds
-    ? deriveVOText(project.script, project.durationSeconds, at, shot.endSeconds)
-    : null;
   const [right] = await db
     .insert(shots)
     .values({
       projectId: id,
+      beatId: shot.beatId,
       sortOrder: shot.sortOrder + 1,
-      startSeconds: at,
-      endSeconds: shot.endSeconds,
-      text: rightText,
+      startInBeat: at,
+      endInBeat: end,
       imagePrompt: shot.imagePrompt,
       motionPrompt: shot.motionPrompt,
+      imagePath: shot.imagePath,
+      imageStatus: shot.imageStatus,
+      clipPath: shot.clipPath,
+      clipStatus: shot.clipStatus,
     })
     .returning();
 

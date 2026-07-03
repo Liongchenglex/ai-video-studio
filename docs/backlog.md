@@ -434,6 +434,63 @@ re-voice; selection/playhead continuity when toggling views.
 
 ---
 
+### 18. v4.0 Phase 2 drop-deferred items
+
+**Status:** Phase 2 (unified editor) shipped 2026-07-03. These items were
+explicitly scoped out of the plan (`docs/superpowers/plans/2026-07-02-v4-phase2-unified-editor.md`,
+Global Constraints) and remain open:
+
+- **Cross-beat shot drag.** A shot's drag/trim in the Timeline view is
+  clamped to its own beat; moving a shot's visuals into a different beat
+  isn't supported. Revisit alongside #17 above.
+- **Beat add/split/merge UI (spec §8.1).** Editing inside a beat keeps it
+  one beat by design (see #14); creating, splitting, or merging beats
+  themselves has no UI yet.
+- **`adopt-beats` endpoint removed after one-time use.**
+  `src/app/api/projects/[id]/shots/adopt-beats/route.ts` migrated the one
+  existing project's 84 legacy (absolute-timed) shots onto the beat
+  timeline and was deleted once that migration ran (see
+  `docs/feature08/testcase-v4-phase2.md` §8 for the run record). If a
+  similar legacy-shot migration is ever needed again, re-create it from git
+  history (commit `52952ee`) rather than reinventing it.
+
+**Tag:** editor, vo, migration — deferred, not blocking.
+
+---
+
+### 19. v4.0 Phase 2 final-review follow-ups
+
+**Status:** Logged 2026-07-03 from the Phase 2 (unified editor) final review.
+None of these block the Phase 2 ship; the Cmd/Ctrl+S split-hijack bug found
+in the same review was fixed directly (see `timeline-view.tsx` keydown
+handler). Remaining items to pick up:
+
+- Split right-half should inherit `imageUrl`/`clipUrl` client-side in
+  `editor-store` `splitShot` (server already copies asset paths; client
+  nulls them until reload); align `docs/feature08/testcase-v4-phase2.md`
+  TC-4.3 wording.
+- Reword two stale error strings referencing the removed `adopt-beats`
+  endpoint (`src/app/api/projects/[id]/shots/[shotId]/route.ts` and
+  `.../split/route.ts`: "run adopt-beats first").
+- Enforce `MIN_SHOT_SECONDS` on recommend-inserted fragments (sub-0.25s
+  beats can yield sub-minimum shots).
+- Wrap recommend's delete-then-insert in a DB transaction (failed insert
+  after delete loses shots).
+- Clear superseded Audio `onended`/`onerror` handlers in
+  `use-beat-playback` `stopAudio` (late-firing handler could advance with
+  stale index).
+- Surface `voStatus` "failed" client-side after a failed revoice instead
+  of reverting to the prior status.
+- Add a DB-level overlap constraint for shots within a beat (TOCTOU race
+  in the app-level check).
+- Docs sweep: feature16 "editor-prototype successor" phrasing; roadmap
+  line "Phases 2–4 are deliberately not written yet"; delete pre-existing
+  dead `src/lib/scene-utils.ts`.
+
+**Tag:** editor, vo, bug, docs — deferred, not blocking.
+
+---
+
 ## Ops / Dev UX
 
 ### 12. HMR warning on dep-array changes during hot reload

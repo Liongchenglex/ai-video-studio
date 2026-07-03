@@ -1,8 +1,7 @@
 /**
  * POST /api/projects/[id]/script/generate
  * Generates a plain-text script (F-03, PRD v3.0) and persists it to
- * project.script. Invalidates any existing voiceover (user must explicitly
- * regenerate VO after a script change).
+ * project.script.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -56,16 +55,9 @@ export async function POST(request: NextRequest, { params }: Params) {
       styleString: project.styleString,
     });
 
-    // Invalidate any existing VO — it was generated from the old script.
     await db
       .update(projects)
-      .set({
-        script,
-        voiceoverPath: null,
-        voiceoverStatus: "pending",
-        voiceoverTimestamps: null,
-        durationSeconds: null,
-      })
+      .set({ script })
       .where(eq(projects.id, id));
 
     console.log(`[script/generate] saved ${script.length} chars to project ${id}`);

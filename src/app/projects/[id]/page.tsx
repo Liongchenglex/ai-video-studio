@@ -7,12 +7,14 @@ import { headers } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, shots } from "@/lib/db/schema";
+import { projects, shots, beats } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { Navbar } from "@/components/navbar";
 import { ProjectWorkspace } from "@/components/project-workspace";
+import type { EditorBeat, EditorShot } from "@/components/editor/editor-store";
 import { isValidUUID } from "@/lib/api-utils";
 import { getDownloadUrl } from "@/lib/r2";
+import { computeBeatOffsets } from "@/lib/beat-timing";
 
 export default async function ProjectPage({
   params,
@@ -50,13 +52,47 @@ export default async function ProjectPage({
     .where(eq(shots.projectId, id))
     .orderBy(asc(shots.sortOrder));
 
-  const shotsWithUrls = await Promise.all(
+  // Map shot rows straight to the store's EditorShot shape (beat-relative
+  // offsets; the deprecated absolute start/endSeconds are not carried).
+  const initialShots: EditorShot[] = await Promise.all(
     projectShots.map(async (shot) => ({
-      ...shot,
+      id: shot.id,
+      beatId: shot.beatId,
+      sortOrder: shot.sortOrder,
+      startInBeat: shot.startInBeat,
+      endInBeat: shot.endInBeat,
+      imagePrompt: shot.imagePrompt,
+      motionPrompt: shot.motionPrompt,
+      imagePath: shot.imagePath,
       imageStatus: shot.imageStatus ?? "pending",
-      clipStatus: shot.clipStatus ?? "pending",
       imageUrl: shot.imagePath ? await getDownloadUrl(shot.imagePath) : null,
+      clipPath: shot.clipPath,
+      clipStatus: shot.clipStatus ?? "pending",
       clipUrl: shot.clipPath ? await getDownloadUrl(shot.clipPath) : null,
+      clipDurationSeconds: shot.clipDurationSeconds,
+    })),
+  );
+
+  // Beats (mirrors GET /beats): ordered, presigned audio, absolute offsets.
+  const beatRows = await db
+    .select()
+    .from(beats)
+    .where(eq(beats.projectId, id))
+    .orderBy(asc(beats.sortOrder));
+
+  const beatOffsets = computeBeatOffsets(beatRows);
+  const beatOffsetById = new Map(beatOffsets.map((o) => [o.id, o]));
+
+  const initialBeats: EditorBeat[] = await Promise.all(
+    beatRows.map(async (b) => ({
+      id: b.id,
+      sortOrder: b.sortOrder,
+      text: b.text,
+      voStatus: b.voStatus ?? "pending",
+      voDurationSeconds: b.voDurationSeconds,
+      voUrl: b.voPath ? await getDownloadUrl(b.voPath) : null,
+      startSeconds: beatOffsetById.get(b.id)?.startSeconds ?? 0,
+      endSeconds: beatOffsetById.get(b.id)?.endSeconds ?? 0,
     })),
   );
 
@@ -66,10 +102,6 @@ export default async function ProjectPage({
 
   const stylePreviewUrl = project.stylePreviewPath
     ? await getDownloadUrl(project.stylePreviewPath)
-    : null;
-
-  const voiceoverUrl = project.voiceoverPath
-    ? await getDownloadUrl(project.voiceoverPath)
     : null;
 
   return (
@@ -90,15 +122,9 @@ export default async function ProjectPage({
           tone: project.tone ?? "educational",
           script: project.script,
           voiceId: project.voiceId || "21m00Tcm4TlvDq8ikWAM",
-          voiceoverPath: project.voiceoverPath,
-          voiceoverStatus: project.voiceoverStatus ?? "pending",
-          voiceoverUrl,
-          durationSeconds: project.durationSeconds,
-          musicPath: project.musicPath,
-          musicStatus: project.musicStatus,
-          musicMood: project.musicMood || "ambient",
         }}
-        initialShots={shotsWithUrls}
+        initialBeats={initialBeats}
+        initialShots={initialShots}
       />
     </div>
   );

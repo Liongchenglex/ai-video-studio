@@ -359,3 +359,116 @@ All v3.0 code paths in scope have been reviewed for the 10 playbook
 categories. Current state is safe for internal development and user
 testing. **Not yet cleared for production launch** pending the three
 blocking items above.
+
+---
+
+## v4.0 Phase 2 (2026-07-03)
+
+**Scope:** All code introduced or changed on `feat/v4-phase2-unified-editor`
+(diff `4c2df06..1cc2269`) — beat-relative shot CRUD/split/recommend, the
+optional `{ text }` body on the revoice endpoint, the (now-removed) legacy
+shot adoption endpoint, and the unified editor UI (`src/components/editor/`).
+**Playbook:** `security-playbook.md`. Reviewed 2026-07-03 by an independent
+agent with no access to the implementation session.
+
+**Verdict: SHIP WITH FIXES** — all three findings below were fixed in
+commit `4ab994b` before merge.
+
+### 1. Authentication (AuthN)
+
+- ✅ Every route in the diff verifies the session server-side
+  (`getSession()` → 401 on missing session).
+- ✅ `page.tsx` redirects unauthenticated visitors to `/login`.
+
+### 2. Authorization (AuthZ)
+
+- ✅ All reads/writes scoped via a `projects.userId` join.
+- ✅ **Cross-project IDOR closed:** shot create validates that `beatId`
+  belongs to the calling project (`beats.projectId === project.id`) before
+  use — this is the same cross-table authorization rule required for every
+  endpoint that accepts a `beatId`.
+- ✅ PATCH/DELETE/split load shots scoped to `(shotId, projectId)`.
+- ✅ `page.tsx` performs the owner check before minting any presigned URL.
+
+### 3. Input Validation & Sanitization
+
+- ✅ UUIDs validated on all path params.
+- ✅ Revoice `{ text }` is type-checked, trimmed, and capped at 2,000
+  characters (400 on violation).
+- ✅ Shot offsets (`startInBeat`/`endInBeat`/`atInBeat`) are
+  `Number.isFinite`-checked and clamped to the parent beat's duration.
+- ✅ Malformed JSON bodies return 400 everywhere (no uncaught parse errors).
+
+### 4. API Security
+
+- ✅ Rate limiting: `generation` preset on revoice/recommend; `mutation`
+  preset on shot CRUD (create/update/delete/split).
+- ✅ CSRF: Origin header verification (`verifyCsrf()`) on every mutation,
+  fail-closed.
+
+### 5. Error Handling & Logging
+
+- ✅ Client-facing errors are generic; detail is logged server-side only.
+- ✅ Failures fail closed — a beat that fails to (re-)voice is persisted as
+  `voStatus: "failed"` rather than left in an ambiguous state.
+
+### 6. Environment & Secrets Management
+
+- ✅ No secrets in client code; server-only keys (ElevenLabs, fal.ai,
+  Anthropic, R2) are untouched by this phase's changes.
+
+### 7. Data Access & Storage
+
+- ✅ Presigned R2 URLs are minted only for owner-scoped assets (same
+  pattern as v3.0).
+
+### 8. Teardown Regression Check
+
+- ✅ Dropping the legacy continuous-VO columns
+  (`projects.voiceoverPath/voiceoverStatus/voiceoverTimestamps/durationSeconds`,
+  `shots.startSeconds/endSeconds/text`) and deleting their endpoints
+  (`/api/projects/[id]/voiceover/generate`, `voiceover-generation.ts`,
+  `vo-text.ts`) removed no security control and left no orphaned-but-reachable
+  route. The one-time `shots/adopt-beats` migration endpoint was likewise
+  removed after use — verified it is no longer reachable.
+
+### 9. Abuse, Misuse & Edge Scenarios
+
+- ✅ **Injection/DoS:** beat text reaches Claude only for the user's own
+  generation — no privilege boundary crossed. The 50,000-char script cap and
+  the new 2,000-char per-beat text cap, combined with a `max_tokens` bound,
+  limit amplification. Generation endpoints remain capped at 5/min.
+
+### Findings and resolutions
+
+- **F2 (Medium, pre-existing, touched this phase):** `POST /api/test/music`
+  lacked rate limiting and CSRF while triggering paid fal.ai generation.
+  **Fixed (`4ab994b`):** added `applyRateLimit("generation")` and
+  `verifyCsrf()` in the standard order.
+- **F1 (Low, pre-existing):** `shots/recommend` and `test/music` returned
+  raw `error.message` to clients, which could leak SDK/DB internals.
+  **Fixed (`4ab994b`):** replaced with static generic messages; detail stays
+  in server logs.
+- **F3 (Low):** `imagePrompt`/`motionPrompt` lacked type and length
+  validation — a non-string truthy value threw an uncaught `TypeError`
+  (500), and unbounded lengths were storable. **Fixed (`4ab994b`):** added a
+  `typeof === "string"` guard before `.trim()` plus a 2,000-char cap in both
+  shot create and PATCH.
+
+### Final Security Gate
+
+| Item | Status |
+|---|---|
+| AuthN on every route | ✅ |
+| AuthZ / ownership incl. cross-table `beatId` check | ✅ |
+| Input validation (incl. 2,000-char caps) | ✅ |
+| Rate limiting + CSRF | ✅ |
+| Errors safe / fail closed | ✅ |
+| Secrets untouched | ✅ |
+| Teardown left no orphaned route | ✅ |
+
+### Sign-off
+
+No unauthenticated mutation, no cross-user data exposure, no secret leak,
+and no IDOR in the new endpoints. **Cleared to ship** — the three findings
+above were fixed before merge in `4ab994b`.
