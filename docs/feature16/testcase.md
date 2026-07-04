@@ -99,7 +99,8 @@ verified. See the "Verified" line per case.
 - **Expected:** 502 `{ error: "Reference sheet generation failed" }`;
   `referenceStatus` persists as `"failed"`; no partial `referenceSheetPath`
   write; the rail shows the failed state with a Redraw retry affordance.
-- **Verified:** live 2026-07-04.
+- **Verified:** by code review + store re-review (failure dispatch path);
+  not exercised live — forcing a FLUX failure on demand isn't practical.
 
 ### TC-2.4: Redraw regenerates and replaces the sheet
 - **Action:** Click "Redraw" on an entity that already has a `done` sheet.
@@ -177,7 +178,8 @@ clean.
 - **Expected:** 400 "Script too large for auto-extract" / "Too many shots
   for auto-extract" — rejected before any Claude call is made (no partial
   spend). This was security finding F2, fixed in `ccf0363`.
-- **Verified:** live (curl) 2026-07-04.
+- **Verified:** by code review + typecheck; not exercised live (requires a
+  60k-char script / 400-shot project, which no fixture has).
 
 ### TC-3.6: Zero-script / zero-shot projects don't crash
 - **Action:** `POST /entities/extract` on a project with no beats

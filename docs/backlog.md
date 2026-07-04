@@ -583,3 +583,18 @@ multiple users.
 - **Biggest quality lift, but wait:** #8 (multi-keyframe transformation
   clips). Do NOT start this until the base pipeline is end-to-end shippable
   (F-06 music, F-08 Shotstack assembly, F-11 YouTube publish).
+
+Final-review additions (2026-07-04):
+- Unique index on entities (projectId, lower(name)) — kills the duplicate-name TOCTOU.
+- Server-side Redraw concurrency guard; smarter failed-redraw status (a failed
+  redraw currently flips status off "done", so the old usable sheet stops
+  conditioning until a successful redraw).
+- Sheet-prompt tuning for FLUX's garbled title text on reference sheets.
+- Pairwise self-overlap check among fresh extract proposals (extend filterAliasOverlap).
+- Responsive treatment for the always-visible Cast & Locations rail (collapse on
+  narrow viewports — the old hidden xl:block hid a placeholder; the live rail
+  needs a collapse, not hiding).
+- notNull migration for shots.referencedEntityIds (column has default([]) only).
+- Normalize description ?? "" at the store's entity-ingestion points (clearing a
+  description round-trips null → controlled/uncontrolled Textarea warning).
+- Extract route: surface partial success when entities insert but tagging fails.

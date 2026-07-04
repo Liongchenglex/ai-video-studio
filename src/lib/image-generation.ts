@@ -14,7 +14,7 @@ fal.config({ credentials: process.env.FAL_KEY! });
 
 // Verified 2026-07-04 with a live call ($0.04): fal-ai/flux-pro/kontext
 // accepts { prompt, image_url } and returns an image (see
-// docs/superpowers/plans task-4 verification). No fallback needed.
+// a live call during Phase 4 Task 4 implementation). No fallback needed.
 const KONTEXT_IMAGE_PROMPT_ENDPOINT = "fal-ai/flux-pro/kontext";
 
 interface GenerateImageInput {
