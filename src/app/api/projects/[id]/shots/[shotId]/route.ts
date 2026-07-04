@@ -61,7 +61,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { project, shot } = await loadOwnedProjectAndShot(id, shotId, session.user.id);
   if (!project || !shot) return notFoundResponse();
 
-  let body: Partial<{
+  let rawBody: unknown;
+  try {
+    rawBody = await request.json();
+  } catch {
+    return badRequestResponse("Invalid request body");
+  }
+  if (typeof rawBody !== "object" || rawBody === null || Array.isArray(rawBody)) {
+    return badRequestResponse("Invalid request body");
+  }
+  const body = rawBody as Partial<{
     beatId: string;
     startInBeat: number;
     endInBeat: number;
@@ -69,11 +78,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     motionPrompt: string;
     referencedEntityIds: string[];
   }>;
-  try {
-    body = await request.json();
-  } catch {
-    return badRequestResponse("Invalid request body");
-  }
 
   const updates: Record<string, unknown> = {};
   const boundsChanged =

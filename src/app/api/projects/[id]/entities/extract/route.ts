@@ -40,6 +40,11 @@ type Params = { params: Promise<{ id: string }> };
 type BeatRow = typeof beats.$inferSelect;
 type ShotRow = typeof shots.$inferSelect;
 
+// Caps bound worst-case Claude token spend per auto-extract call (~7x the
+// current real project's script length / shot count).
+const MAX_SCRIPT_LENGTH = 60_000;
+const MAX_SHOT_COUNT = 400;
+
 /**
  * A shot's narration = joined text of every beat overlapping its absolute
  * range (anchor offset + startInBeat/endInBeat), skipping zero-duration
@@ -105,6 +110,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     .map((b) => b.text)
     .join(" ")
     .trim();
+
+  if (fullScript.length > MAX_SCRIPT_LENGTH) {
+    return badRequestResponse("Script too large for auto-extract");
+  }
+  if (shotRows.length > MAX_SHOT_COUNT) {
+    return badRequestResponse("Too many shots for auto-extract");
+  }
 
   let created = 0;
   let skipped = 0;

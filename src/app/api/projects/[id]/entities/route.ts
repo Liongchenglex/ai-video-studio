@@ -94,12 +94,16 @@ export async function POST(request: NextRequest, { params }: Params) {
     .limit(1);
   if (!project || project.deletedAt) return notFoundResponse();
 
-  let body: { name?: string; type?: string; description?: string };
+  let rawBody: unknown;
   try {
-    body = await request.json();
+    rawBody = await request.json();
   } catch {
     return badRequestResponse("Invalid request body");
   }
+  if (typeof rawBody !== "object" || rawBody === null || Array.isArray(rawBody)) {
+    return badRequestResponse("Invalid request body");
+  }
+  const body = rawBody as { name?: string; type?: string; description?: string };
 
   if (typeof body.name !== "string") {
     return badRequestResponse("name is required");

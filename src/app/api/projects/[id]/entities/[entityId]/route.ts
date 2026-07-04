@@ -62,12 +62,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { project, entity } = await loadOwnedProjectAndEntity(id, entityId, session.user.id);
   if (!project || !entity) return notFoundResponse();
 
-  let body: Partial<{ name: string; description: string }>;
+  let rawBody: unknown;
   try {
-    body = await request.json();
+    rawBody = await request.json();
   } catch {
     return badRequestResponse("Invalid request body");
   }
+  if (typeof rawBody !== "object" || rawBody === null || Array.isArray(rawBody)) {
+    return badRequestResponse("Invalid request body");
+  }
+  const body = rawBody as Partial<{ name: string; description: string }>;
 
   const updates: Record<string, unknown> = {};
 
