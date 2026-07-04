@@ -516,7 +516,8 @@ export function EditorProvider(props: {
           console.warn("[editor-store] create entity failed:", await res.text());
           return;
         }
-        const entity = (await res.json()) as EditorEntity;
+        const row = (await res.json()) as Partial<EditorEntity>;
+        const entity: EditorEntity = { shotCount: 0, ...row } as EditorEntity;
         dispatch({ type: "addEntity", entity });
       } catch (err) {
         console.error("[editor-store] create entity error:", err);
@@ -572,7 +573,6 @@ export function EditorProvider(props: {
 
   const generateReference = useCallback(
     async (id: string) => {
-      const prevEntity = state.entities.find((e) => e.id === id);
       dispatch({ type: "patchEntity", entityId: id, patch: { referenceStatus: "generating" } });
       try {
         const res = await fetch(`/api/projects/${projectId}/entities/${id}/reference`, {
@@ -580,13 +580,11 @@ export function EditorProvider(props: {
         });
         if (!res.ok) {
           console.warn("[editor-store] generate reference failed:", await res.text());
-          if (prevEntity) {
-            dispatch({
-              type: "patchEntity",
-              entityId: id,
-              patch: { referenceStatus: prevEntity.referenceStatus },
-            });
-          }
+          dispatch({
+            type: "patchEntity",
+            entityId: id,
+            patch: { referenceStatus: "failed" },
+          });
           return;
         }
         const updated = (await res.json()) as Partial<EditorEntity>;
@@ -595,16 +593,14 @@ export function EditorProvider(props: {
         dispatch({ type: "patchEntity", entityId: id, patch: updated });
       } catch (err) {
         console.error("[editor-store] generate reference error:", err);
-        if (prevEntity) {
-          dispatch({
-            type: "patchEntity",
-            entityId: id,
-            patch: { referenceStatus: prevEntity.referenceStatus },
-          });
-        }
+        dispatch({
+          type: "patchEntity",
+          entityId: id,
+          patch: { referenceStatus: "failed" },
+        });
       }
     },
-    [projectId, state.entities],
+    [projectId],
   );
 
   const extractEntities = useCallback(async () => {
