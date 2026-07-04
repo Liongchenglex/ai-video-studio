@@ -77,7 +77,7 @@ For each entity return:
 ${MAX_ENTITIES} is a HARD MAXIMUM, not a target to fill. Only propose an entity when you are genuinely confident it (a) recurs across multiple distinct scenes and (b) is visually distinctive enough that a reference image is worth generating for it. Do not pad the list with marginal, one-off, or barely-recurring candidates just because budget remains — returning fewer than ${MAX_ENTITIES}, or even zero, is the correct answer whenever the script doesn't clearly warrant more (including when the existing bible below already covers it).
 
 ## No subject overlap
-Never propose two entities whose visual subject substantially overlaps — either two of your own proposals, or one of yours against an already-registered entity (see below). "Iron plows and farming tools" and "Iron tools and weapons" are the same subject wearing different words; merge them into a single entity or drop the redundant one. If in doubt whether two candidates are the same thing, they are — merge or skip rather than propose both.
+Never propose two entities whose visual subject substantially overlaps — either two of your own proposals, or one of yours against an already-registered entity (see below). Two names that describe the same underlying subject in different words are the same entity; merge them into a single entity or drop the redundant one. If in doubt whether two candidates are the same thing, they are — merge or skip rather than propose both.
 
 Return AT MOST ${MAX_ENTITIES} entities, ordered with the most narratively central / most-recurring first.
 
@@ -92,7 +92,7 @@ function buildExistingEntitiesBlock(existingNames: string[]): string {
 The following entities are ALREADY in this project's reference bible:
 ${list}
 
-These entities must NOT be re-proposed — not under the same name, an alias, a title, an epithet, a near-synonym, or any other variant whose visual subject substantially overlaps one already listed. For example, if "Liu Bang" is listed above, do NOT propose "Liu Bang", "Emperor Gaozu", "the Emperor", or any other name that refers to the same individual. Likewise, if "Iron tools and weapons" is listed above, do NOT also propose "Iron plows and farming tools" or any other close variant of the same physical subject — that overlap is exactly as disqualifying as reusing the name. Only propose entities that are genuinely NEW and visually distinct from everything above. If, after applying this and the selection-discipline rules, nothing new clears the bar, return an empty array — that is a correct and expected result.`;
+These entities must NOT be re-proposed — not under the same name, an alias, a title, an epithet, a near-synonym, or any other variant whose visual subject substantially overlaps one already listed. That overlap is exactly as disqualifying as reusing the name outright. Only propose entities that are genuinely NEW and visually distinct from everything above. If, after applying this and the selection-discipline rules, nothing new clears the bar, return an empty array — that is a correct and expected result.`;
 }
 
 /** Validates and clamps one raw extracted-entity candidate. Returns null to drop it. */
@@ -110,10 +110,43 @@ function validateExtractedEntity(raw: unknown): ExtractedEntity | null {
 }
 
 /**
+ * Drops any candidate whose name mechanically overlaps an already-registered
+ * entity's name — either name containing the other, case-insensitively,
+ * after trimming. Catches the exact failure mode of a negative-example prompt
+ * priming its own violation (e.g. "Emperor Gaozu (Liu Bang as emperor)"
+ * proposed against an existing "Liu Bang"). This is a deterministic backstop
+ * for name-level overlap only; semantic aliases with no shared substring
+ * (e.g. a genuinely different name for the same person) aren't caught here
+ * and still rely on the prompt rules above plus user curation.
+ */
+function filterAliasOverlap(
+  candidates: ExtractedEntity[],
+  existingNames: string[],
+): ExtractedEntity[] {
+  const existingLower = existingNames.map((n) => n.trim().toLowerCase()).filter((n) => n.length > 0);
+  if (existingLower.length === 0) return candidates;
+
+  const kept: ExtractedEntity[] = [];
+  for (const candidate of candidates) {
+    const candidateLower = candidate.name.trim().toLowerCase();
+    const overlaps = existingLower.some(
+      (existing) => candidateLower.includes(existing) || existing.includes(candidateLower),
+    );
+    if (overlaps) {
+      console.warn(`[entity-extract] dropped alias-overlap: "${candidate.name}"`);
+      continue;
+    }
+    kept.push(candidate);
+  }
+  return kept;
+}
+
+/**
  * Identifies recurring visual entities in the full project script. One
  * forced-tool call; response is validated/clamped (invalid types dropped,
  * name/description truncated to caps, empty names dropped) and capped at
- * MAX_ENTITIES.
+ * MAX_ENTITIES, then run through filterAliasOverlap as a deterministic
+ * backstop against name-level overlap with existingNames.
  *
  * existingNames — names of entities already registered in the project's
  * reference bible (pre-insert). When non-empty, the system prompt is
@@ -170,7 +203,7 @@ export async function extractEntities(
       `[entity-extract] dropped/clamped entities — got ${rawEntities.length} raw, ${validated.length} valid.`,
     );
   }
-  return validated;
+  return filterAliasOverlap(validated, existingNames);
 }
 
 // ─── tagShots ──────────────────────────────────────────────────────────────
