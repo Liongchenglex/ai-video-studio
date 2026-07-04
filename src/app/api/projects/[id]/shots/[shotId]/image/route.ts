@@ -5,12 +5,19 @@
  * the path on the shot row. Returns the new presigned download URL so the
  * client can update without a refresh.
  *
+ * Reference Bible conditioning (F-16): if the shot is tagged with entities
+ * (`referencedEntityIds`), resolves the primary tagged entity — the first
+ * tagged entity of type `character` with a `done` reference sheet, else the
+ * first tagged entity with a `done` sheet — and conditions generation on its
+ * presigned reference-sheet URL via Kontext's image+prompt mode. Untagged or
+ * not-yet-ready entities fall back to unconditioned generation, unchanged.
+ *
  * Synchronous: awaits fal.ai. Typical latency 20-30s per image.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, shots } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { projects, shots, entities, type Entity } from "@/lib/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -24,6 +31,38 @@ import { generateImage } from "@/lib/image-generation";
 import { getDownloadUrl } from "@/lib/r2";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
+
+/**
+ * Resolves the shot's single primary conditioning entity, project-scoped:
+ * the first tagged entity (in tag order) of type "character" with a "done"
+ * reference sheet, else the first tagged entity (in tag order) with a "done"
+ * sheet. Returns null if the shot has no tagged, ready entity.
+ */
+async function resolvePrimaryEntity(
+  projectId: string,
+  referencedEntityIds: string[] | null | undefined,
+): Promise<Entity | null> {
+  const taggedIds = referencedEntityIds ?? [];
+  if (taggedIds.length === 0) return null;
+
+  const readyRows = await db
+    .select()
+    .from(entities)
+    .where(
+      and(
+        eq(entities.projectId, projectId),
+        inArray(entities.id, taggedIds),
+        eq(entities.referenceStatus, "done"),
+      ),
+    );
+  const readyById = new Map(readyRows.map((e) => [e.id, e]));
+  // Preserve tag order (DB row order is unspecified).
+  const ordered = taggedIds
+    .map((tid) => readyById.get(tid))
+    .filter((e): e is Entity => e !== undefined);
+
+  return ordered.find((e) => e.type === "character") ?? ordered[0] ?? null;
+}
 
 export async function POST(request: NextRequest, { params }: Params) {
   const rateLimitError = applyRateLimit(request, "generation");
@@ -54,8 +93,16 @@ export async function POST(request: NextRequest, { params }: Params) {
   await db.update(shots).set({ imageStatus: "generating" }).where(eq(shots.id, shotId));
 
   try {
+    const primaryEntity = await resolvePrimaryEntity(id, shot.referencedEntityIds);
+    const referenceImageUrl = primaryEntity?.referenceSheetPath
+      ? await getDownloadUrl(primaryEntity.referenceSheetPath)
+      : null;
+
     console.log(
-      `[shot/image] project=${id} shot=${shotId} | prompt: ${shot.imagePrompt.substring(0, 120)}...`,
+      `[shot/image] project=${id} shot=${shotId} | prompt: ${shot.imagePrompt.substring(0, 120)}... | ` +
+        (primaryEntity
+          ? `conditioned on entity=${primaryEntity.id} (${primaryEntity.name})`
+          : "unconditioned"),
     );
 
     const r2Key = `projects/${project.id}/shots/${shot.id}/image.png`;
@@ -63,6 +110,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       r2Key,
       stillImagePrompt: shot.imagePrompt,
       styleString: project.styleString,
+      referenceImageUrl,
     });
 
     await db

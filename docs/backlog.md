@@ -216,24 +216,28 @@ align by eye or zoom in.
 
 ### 7a. Entity reference images → PROMOTED to feature F-16 (Reference Bible)
 
-**Status:** ✅ Promoted 2026-06-13. This proposal was the narrow first draft of
-what is now a full feature — the **Reference Bible** (characters, locations,
-objects as multi-view reference sheets; auto-extract + auto-tag + curate;
-FLUX.1 Kontext conditioning).
+**Status:** ✅ Promoted 2026-06-13, **shipped 2026-07-04** (v4.0 Phase 4).
+This proposal was the narrow first draft of what is now a full, shipped
+feature — the **Reference Bible** (characters, locations, objects as
+multi-view reference sheets; auto-extract + auto-tag + curate; FLUX.1
+Kontext conditioning).
 
-**Do not implement from this entry.** The authoritative spec and navigation
-map now live here:
+Docs now live here:
 - Design: [`docs/superpowers/specs/2026-06-13-unified-directing-editor-design.md`](../superpowers/specs/2026-06-13-unified-directing-editor-design.md) (Pillar C)
-- Feature doc: [`docs/feature16/feature.md`](feature16/feature.md)
+- Feature doc (as built): [`docs/feature16/feature.md`](feature16/feature.md)
+- Test cases: [`docs/feature16/testcase.md`](feature16/testcase.md)
+- Security review: [`docs/feature16/security-review.md`](feature16/security-review.md)
 
 What changed vs this draft: `type` enum became `character|location|object`
 (was `character|setting|object`); the canonical reference is **one coherent
 multi-view sheet image** per entity (not a single portrait); the column is
-`referenceSheetPath`/`referenceStatus`; and the FLUX per-call reference cap +
-**multi-entity-per-shot conditioning** are tracked as explicit risks in the
-feature doc (build single-entity first).
+`referenceSheetPath`/`referenceStatus`; the original FLUX per-call reference
+cap concern turned out to be moot as-built (style conditioning is textual,
+not image-based — see the correction in `feature16/feature.md`); and
+**multi-entity-per-shot conditioning** remains deferred (single-entity
+conditioning shipped, see backlog #17 below).
 
-**Tag:** feature, quality, editor — superseded by F-16
+**Tag:** feature, quality, editor — superseded by, and shipped as, F-16
 
 ---
 
@@ -409,18 +413,29 @@ mid-type. Revisit if users want paragraph-paste to auto-segment.
 
 ### 15. Multi-entity-per-shot conditioning (F-16)
 
+**Status:** Single-entity conditioning **shipped 2026-07-04** (v4.0 Phase
+4) — a live foundation now exists to build on: `resolvePrimaryEntity()` in
+`src/app/api/projects/[id]/shots/[shotId]/image/route.ts` already picks one
+primary entity from a shot's tags (character wins over other types). This
+item is the natural next step, not a from-scratch build.
+
 A shot featuring two entities at once (e.g. a character *in* a location)
 needs conditioning on both reference sheets; FLUX.1 Kontext is strongest
-with a single reference. Build single-entity conditioning first; layer
-multi-entity after (composite references, or primary-reference +
-describe-the-rest). Full detail in [`docs/feature16/feature.md`](feature16/feature.md).
+with a single reference. Single-entity conditioning is done; layer
+multi-entity next (composite references, or primary-reference +
+describe-the-rest). Full detail in [`docs/feature16/feature.md`](feature16/feature.md)
+("Tradeoffs" and "Deferred items").
 **Tag:** feature, quality, F-16 — phase 2 of the Reference Bible.
 
 ### 16. True multi-pose / turnaround sheets (F-16)
 
-v1 of the Reference Bible uses one coherent multi-view sheet image per
-entity. Richer per-pose anchoring (front/side/back/expressions selectable
-per shot) is deferred until we see where single-sheet conditioning breaks.
+**Status:** v1 shipped 2026-07-04 with one coherent multi-view sheet image
+per entity (`src/lib/reference-sheet.ts`), generated and live-verified for
+both character and location entities on Project T. Richer per-pose
+anchoring (front/side/back/expressions selectable per shot) is deferred
+until we see where single-sheet conditioning breaks in real use — the
+single-sheet foundation is now live, so this can be evaluated against real
+generated sheets rather than speculatively.
 **Tag:** feature, quality, F-16 — later iteration.
 
 ### 17. Timeline ⇄ Storyboard view-sync edge cases
@@ -491,6 +506,45 @@ handler). Remaining items to pick up:
 
 ---
 
+### 20. v4.0 Phase 4 (Reference Bible) follow-ups
+
+**Status:** Logged 2026-07-04 from the Phase 4 ship and its independent
+security review (`docs/feature16/security-review.md`). None of these block
+the Phase 4 ship — both security findings from that review (malformed-body
+500s, unbounded extract fan-out) were fixed directly in commit `ccf0363`
+before merge. Remaining items to pick up:
+
+- **Per-user (not per-IP) rate budget for paid endpoints.** Rate limiting
+  across the app, including the new entity/reference/extract endpoints, is
+  per-IP — a pre-existing platform limitation, not introduced by this
+  phase, but it applies squarely to F-16's paid-generation surface
+  (sheet generation, extract, conditioned shot images). Tracked here
+  rather than re-litigated per feature.
+- **Per-project entity count soft cap.** No limit today (rows are cheap,
+  sheet generation is separately gated) — flagged as an INFO item in the
+  security review, not a blocker, but worth a soft cap if projects grow
+  large enough that the rail becomes unwieldy.
+- **Alias-containment filter over-suppression edge.** `filterAliasOverlap()`
+  in `src/lib/entity-extraction.ts` drops any newly-extracted candidate
+  whose name contains, or is contained by, an existing entity's name. This
+  is deliberately blunt and can drop a genuinely distinct entity that
+  shares a substring with an existing one. Current escape hatch: the manual
+  `+ Add entity` form bypasses extraction entirely. A future pass could
+  narrow the filter (e.g. word-boundary matching instead of raw substring)
+  without losing its ability to catch the alias-priming failure it was
+  built for (see `docs/feature16/testcase.md` TC-3.3).
+- **Tag-batch results aren't persisted per batch.** `tagShots()` in
+  `entity-extraction.ts` runs sequential 40-shot batches and merges results
+  in memory before the route writes them; if the process crashes mid-run
+  (e.g. between batch 2 and batch 3 of a large project), already-tagged
+  batches are lost rather than partially persisted. Low risk at current
+  scale (batches are fast, no evidence of a mid-run crash in practice) but
+  would matter more if shot counts grow toward the 400-shot cap.
+
+**Tag:** feature, quality, F-16, security — deferred, not blocking.
+
+---
+
 ## Ops / Dev UX
 
 ### 12. HMR warning on dep-array changes during hot reload
@@ -529,3 +583,18 @@ multiple users.
 - **Biggest quality lift, but wait:** #8 (multi-keyframe transformation
   clips). Do NOT start this until the base pipeline is end-to-end shippable
   (F-06 music, F-08 Shotstack assembly, F-11 YouTube publish).
+
+Final-review additions (2026-07-04):
+- Unique index on entities (projectId, lower(name)) — kills the duplicate-name TOCTOU.
+- Server-side Redraw concurrency guard; smarter failed-redraw status (a failed
+  redraw currently flips status off "done", so the old usable sheet stops
+  conditioning until a successful redraw).
+- Sheet-prompt tuning for FLUX's garbled title text on reference sheets.
+- Pairwise self-overlap check among fresh extract proposals (extend filterAliasOverlap).
+- Responsive treatment for the always-visible Cast & Locations rail (collapse on
+  narrow viewports — the old hidden xl:block hid a placeholder; the live rail
+  needs a collapse, not hiding).
+- notNull migration for shots.referencedEntityIds (column has default([]) only).
+- Normalize description ?? "" at the store's entity-ingestion points (clearing a
+  description round-trips null → controlled/uncontrolled Textarea warning).
+- Extract route: surface partial success when entities insert but tagging fails.

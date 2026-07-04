@@ -7,11 +7,11 @@ import { headers } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, shots, beats } from "@/lib/db/schema";
+import { projects, shots, beats, entities } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { Navbar } from "@/components/navbar";
 import { ProjectWorkspace } from "@/components/project-workspace";
-import type { EditorBeat, EditorShot } from "@/components/editor/editor-store";
+import type { EditorBeat, EditorEntity, EditorShot } from "@/components/editor/editor-store";
 import { isValidUUID } from "@/lib/api-utils";
 import { getDownloadUrl } from "@/lib/r2";
 import { computeBeatOffsets } from "@/lib/beat-timing";
@@ -70,6 +70,7 @@ export default async function ProjectPage({
       clipStatus: shot.clipStatus ?? "pending",
       clipUrl: shot.clipPath ? await getDownloadUrl(shot.clipPath) : null,
       clipDurationSeconds: shot.clipDurationSeconds,
+      referencedEntityIds: shot.referencedEntityIds ?? [],
     })),
   );
 
@@ -93,6 +94,35 @@ export default async function ProjectPage({
       voUrl: b.voPath ? await getDownloadUrl(b.voPath) : null,
       startSeconds: beatOffsetById.get(b.id)?.startSeconds ?? 0,
       endSeconds: beatOffsetById.get(b.id)?.endSeconds ?? 0,
+    })),
+  );
+
+  // Reference Bible entities (v4.0 Phase 4, F-16) — project-scoped, ordered
+  // by createdAt (mirrors GET /entities). shotCount is computed from the
+  // shots already loaded above rather than a second DB pass, since
+  // initialShots' referencedEntityIds is the same source the count needs.
+  const entityRows = await db
+    .select()
+    .from(entities)
+    .where(eq(entities.projectId, id))
+    .orderBy(asc(entities.createdAt));
+
+  const entityShotCountById = new Map<string, number>();
+  for (const s of initialShots) {
+    for (const entityId of s.referencedEntityIds) {
+      entityShotCountById.set(entityId, (entityShotCountById.get(entityId) ?? 0) + 1);
+    }
+  }
+
+  const initialEntities: EditorEntity[] = await Promise.all(
+    entityRows.map(async (e) => ({
+      id: e.id,
+      name: e.name,
+      type: e.type,
+      description: e.description ?? "",
+      referenceStatus: e.referenceStatus ?? "pending",
+      referenceSheetUrl: e.referenceSheetPath ? await getDownloadUrl(e.referenceSheetPath) : null,
+      shotCount: entityShotCountById.get(e.id) ?? 0,
     })),
   );
 
@@ -125,6 +155,7 @@ export default async function ProjectPage({
         }}
         initialBeats={initialBeats}
         initialShots={initialShots}
+        initialEntities={initialEntities}
       />
     </div>
   );

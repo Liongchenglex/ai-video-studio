@@ -3,14 +3,15 @@
 **Version:** 3.0 — Editor-First Pivot
 **Date:** April 2026
 **Status:** Active
-**Phases:** 5 | **Features:** 15 (+ F-16 planned) | **Shipped:** F-01–F-05, F-07, F-08
+**Phases:** 5 | **Features:** 16 | **Shipped:** F-01–F-05, F-07, F-08, F-16
 
-> **✅ v4.0 IN PROGRESS — design approved 2026-06-13, Phase 2 shipped 2026-07-03.**
+> **✅ v4.0 IN PROGRESS — design approved 2026-06-13, Phase 2 shipped
+> 2026-07-03, Phase 4 (Reference Bible) shipped 2026-07-04.**
 > This PRD describes the **v3.0 editor-first product** and remains accurate for
 > parts of the code untouched by v4.0. The **Unified Directing Editor** —
-> is being built in phases: **Phase 1 (beat-based VO) and Phase 2 (unified
-> editor) are both shipped.** Batch generate (Phase 3) and the Reference
-> Bible (Phase 4) are still planned. Authoritative docs:
+> is being built in phases: **Phase 1 (beat-based VO), Phase 2 (unified
+> editor), and Phase 4 (Reference Bible) are all shipped.** Batch generate
+> (Phase 3) is the only remaining v4.0 phase. Authoritative docs:
 > [`docs/superpowers/specs/2026-06-13-unified-directing-editor-design.md`](docs/superpowers/specs/2026-06-13-unified-directing-editor-design.md)
 > (design spec) and
 > [`docs/superpowers/plans/2026-06-13-v4-unified-editor-roadmap.md`](docs/superpowers/plans/2026-06-13-v4-unified-editor-roadmap.md)
@@ -25,14 +26,15 @@
 >   voiceover has been replaced by per-beat audio; editing a beat's text
 >   re-voices only that beat, and later beats ripple in time automatically.
 >   The legacy continuous-VO columns and endpoints have been deleted.
-> - **Reference Bible — "Cast & Locations" (new feature F-16).** 🔷 Still
->   planned (Phase 4). A per-project bible of recurring characters,
->   locations, and objects, each with a multi-view reference sheet that
->   conditions shot image generation for visual consistency. See
->   [`docs/feature16/feature.md`](docs/feature16/feature.md).
-> - **Batch "Generate all"** 🔷 Still planned (Phase 3) — server-side
->   fan-out for images/clips with per-item status, replacing the
->   one-shot-at-a-time grind.
+> - **Reference Bible — "Cast & Locations" (F-16).** **✅ Shipped
+>   2026-07-04.** A per-project bible of recurring characters, locations,
+>   and objects, each with a multi-view reference sheet that conditions shot
+>   image generation for visual consistency. Built *before* Phase 3
+>   (batch generate) so batch generation will be entity-conditioned from its
+>   first run. See [`docs/feature16/feature.md`](docs/feature16/feature.md).
+> - **Batch "Generate all"** 🔷 Still planned (Phase 3, the only remaining
+>   v4.0 phase) — server-side fan-out for images/clips with per-item status,
+>   replacing the one-shot-at-a-time grind.
 
 ---
 
@@ -224,10 +226,9 @@ Four steps after login: **Setup → Script → Editor → Publish**. Each step i
 > reworked: it is now **Concept → Style → Editor → Publish**. Setup remains
 > first-run setup (Concept + Style), but Script and Editor have collapsed
 > into one **unified editor** — inline-editable script over a beat/shot
-> timeline, a Storyboard view, and a static **Cast & Locations rail**
-> placeholder on the left (the rail is live; the F-16 Reference Bible
-> feature behind it is still Phase 4 — planned, not built). Publish is
-> unchanged and still pending separately. The steps below describe the
+> timeline, a Storyboard view, and the **Cast & Locations rail** (the F-16
+> Reference Bible feature behind it — ✅ shipped 2026-07-04, Phase 4).
+> Publish is unchanged and still pending separately. The steps below describe the
 > **v3.0 flow that has been replaced** — kept for historical reference; see
 > [`docs/feature08/feature.md`](docs/feature08/feature.md) for the current
 > editor and the design spec linked in the header for the full target flow.
@@ -334,7 +335,7 @@ Click **Render** on the Editor to move to Publish.
 | | F-10 | Thumbnail Generation | P0 | — |
 | | F-11 | YouTube Publishing | P0 | — |
 | | F-12 | SEO Metadata Generation | P0 | — |
-| v4.0 — Unified Directing Editor | F-16 | Reference Bible (Cast & Locations) | P0 | 🔷 Planned (v4.0 roadmap Phase 4) |
+| v4.0 — Unified Directing Editor | F-16 | Reference Bible (Cast & Locations) | P0 | ✅ Shipped (v4.0 Phase 4, 2026-07-04) |
 | Phase 6 — Intelligence | F-13 | Research & Ideation Engine | P2 | v2.0 |
 | | F-14 | Analytics Feedback Loop | P2 | v2.0 |
 | | F-15 | Multi-Channel Management | P3 | v2.0 |
@@ -349,7 +350,7 @@ v1.0 delivers a functioning editor-first creator loop. Bolded items ship first.
 | Iter 1 ✅ | **F-03** (simplified script, no scenes), **F-05** (continuous VO) |
 | Iter 2 ✅ | **F-08** (timeline editor — waveform, shot CRUD, playback, no generation yet) |
 | Iter 3 ✅ | **F-04** + **F-07** (image + clip generation wired into editor shots) |
-| v4.0 (in progress) | Unified Directing Editor: beats + per-beat VO (Phase 1 ✅), unified editor UI (Phase 2 ✅ shipped 2026-07-03), batch generate (Phase 3, planned), **F-16 Reference Bible (Cast & Locations)** (Phase 4, planned) — see the v4.0 roadmap |
+| v4.0 (in progress) | Unified Directing Editor: beats + per-beat VO (Phase 1 ✅), unified editor UI (Phase 2 ✅ shipped 2026-07-03), **F-16 Reference Bible (Cast & Locations)** (Phase 4 ✅ shipped 2026-07-04, built before Phase 3), batch generate (Phase 3, planned — only remaining phase) — see the v4.0 roadmap |
 | Iter 4 | **F-06** (music), **F-08** final render via Shotstack |
 | Iter 5 | **F-10** (thumbnails), **F-11** (publish), **F-12** (SEO), polish, deploy |
 | v1.1 | F-09 captions, voice cloning (F-05), Style LoRA (F-02), AI-suggest prompts in F-08 |

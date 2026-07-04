@@ -20,7 +20,13 @@ one before it.
 | **1. Beat data model + per-beat VO** | `2026-06-13-v4-phase1-beat-data-model-and-vo.md` ✅ written | `beats` + `entities` tables, `shots` gains `beatId` + offsets + `referencedEntityIds`; segmentation; per-beat ElevenLabs VO with prosody-continuity; sequential timing helper; backfill of existing projects | — (foundation) |
 | **2. Unified editor + two views** | `2026-07-02-v4-phase2-unified-editor.md` ✅ **shipped 2026-07-03** | Beat/shot two-layer timeline, inline editable script (re-voices one beat), Timeline⇄Storyboard toggle over one shared store, inspector; legacy continuous-VO model retired | Phase 1 |
 | **3. Batch "Generate all"** | _to be written_ | Server-side fan-out for all images/clips, queue + per-item status surfaced in the Storyboard view, retry | Phase 2 ✅ |
-| **4. Reference Bible (F-16)** | _to be written_ | `entities` CRUD + multi-view reference-sheet generation, auto-extract + auto-tag, single-entity FLUX conditioning (multi-entity later) | Phase 2 ✅ (UI rail) + Phase 1 (`referencedEntityIds`) |
+| **4. Reference Bible (F-16)** | `2026-07-04-v4-phase4-reference-bible.md` ✅ **shipped 2026-07-04** | `entities` CRUD + multi-view reference-sheet generation, auto-extract + auto-tag, single-entity FLUX conditioning (multi-entity later) | Phase 2 ✅ (UI rail) + Phase 1 (`referencedEntityIds`) |
+
+**Note on Phase 3 (still to be written):** it must route its fan-out through
+the same `POST /shots/:shotId/image` endpoint Phase 4 already conditions on
+the primary tagged entity — batch generation therefore does not need any
+extra entity-conditioning work of its own; it inherits it for free by calling
+the existing route per shot.
 
 **Phase 2 docs:** [`docs/feature08/feature.md`](../../feature08/feature.md) ·
 [`docs/feature08/testcase-v4-phase2.md`](../../feature08/testcase-v4-phase2.md) ·
@@ -28,9 +34,13 @@ one before it.
 [`docs/feature05/feature.md`](../../feature05/feature.md) ·
 [`docs/feature03/feature.md`](../../feature03/feature.md).
 
-Phases 2–4 are deliberately **not written yet** — their detail will shift based
-on what Phase 1 reveals (e.g. exact beat/shot timing edge cases). Generate each
-phase plan when you reach it, from the spec section it implements.
+**Phase 4 docs:** [`docs/feature16/feature.md`](../../feature16/feature.md) ·
+[`docs/feature16/testcase.md`](../../feature16/testcase.md) ·
+[`docs/feature16/security-review.md`](../../feature16/security-review.md).
+
+Phase 3 is deliberately **not written yet** — its detail will shift based on
+what Phases 1–2 revealed (e.g. exact beat/shot timing edge cases). Generate
+its plan when you reach it, from the spec section it implements.
 
 ## Deferred items (tracked, not in these phases)
 
