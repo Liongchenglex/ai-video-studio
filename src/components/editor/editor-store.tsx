@@ -1,9 +1,17 @@
 /**
- * Unified-editor shared store (v4.0 Pillar A/B).
- * One React context owns beats, shots, selection, and view; Timeline,
- * Storyboard, Script strip, and Inspector are all renderers of this state
- * — the spec §5 "two views over one source of truth" invariant. All API
- * mutations live here so no view talks to the network directly.
+ * Unified-editor shared store (v4.0 Pillar A/B, entities: Pillar C/Phase 4).
+ * One React context owns beats, shots, entities, selection, and view;
+ * Timeline, Storyboard, Script strip, Inspector, and the Cast & Locations
+ * rail are all renderers of this state — the spec §5 "two views over one
+ * source of truth" invariant. All API mutations live here so no view talks
+ * to the network directly.
+ *
+ * Entity shot counts: the server computes `shotCount` at fetch time, but
+ * the store keeps `shots` as the single live source of truth. Rather than
+ * trust the server snapshot after local tag/untag actions, consumers that
+ * need a live count call the exported `entityShotCount(entityId, shots)`
+ * selector, which recomputes from `state.shots` on every render. The raw
+ * `shotCount` field on `EditorEntity` is kept only as the as-fetched value.
  */
 "use client";
 
@@ -46,6 +54,19 @@ export interface EditorShot {
   clipStatus: string;
   clipUrl: string | null;
   clipDurationSeconds: number | null;
+  // Optional (not yet populated by page.tsx until Task 7 wires the server
+  // mapping) — helpers and reducer paths must tolerate undefined via `?? []`.
+  referencedEntityIds?: string[];
+}
+
+export interface EditorEntity {
+  id: string;
+  name: string;
+  type: "character" | "location" | "object";
+  description: string;
+  referenceStatus: string;
+  referenceSheetUrl: string | null;
+  shotCount: number;
 }
 
 export type EditorView = "timeline" | "storyboard";
@@ -61,6 +82,7 @@ export type EditorSelection =
 interface State {
   beats: EditorBeat[];
   shots: EditorShot[];
+  entities: EditorEntity[];
   view: EditorView;
   selection: EditorSelection;
 }
@@ -72,6 +94,10 @@ type Action =
   | { type: "addShot"; shot: EditorShot }
   | { type: "patchShot"; shotId: string; patch: Partial<EditorShot> }
   | { type: "removeShot"; shotId: string }
+  | { type: "setEntities"; entities: EditorEntity[] }
+  | { type: "addEntity"; entity: EditorEntity }
+  | { type: "patchEntity"; entityId: string; patch: Partial<EditorEntity> }
+  | { type: "removeEntity"; entityId: string }
   | { type: "setView"; view: EditorView }
   | { type: "select"; selection: EditorSelection };
 
@@ -116,6 +142,34 @@ function reducer(state: State, action: Action): State {
             ? null
             : state.selection,
       };
+    case "setEntities":
+      return { ...state, entities: action.entities };
+    case "addEntity":
+      return { ...state, entities: [...state.entities, action.entity] };
+    case "patchEntity":
+      return {
+        ...state,
+        entities: state.entities.map((e) =>
+          e.id === action.entityId ? { ...e, ...action.patch } : e,
+        ),
+      };
+    case "removeEntity":
+      return {
+        ...state,
+        entities: state.entities.filter((e) => e.id !== action.entityId),
+        // Mirror the server's DELETE side-effect: strip the removed id from
+        // every shot's local tag list so chips/badges disappear immediately.
+        shots: state.shots.map((s) =>
+          (s.referencedEntityIds ?? []).includes(action.entityId)
+            ? {
+                ...s,
+                referencedEntityIds: (s.referencedEntityIds ?? []).filter(
+                  (id) => id !== action.entityId,
+                ),
+              }
+            : s,
+        ),
+      };
     case "setView":
       return { ...state, view: action.view };
     case "select":
@@ -129,6 +183,7 @@ interface EditorContextValue {
   projectId: string;
   beats: EditorBeat[];
   shots: EditorShot[];
+  entities: EditorEntity[];
   totalDuration: number;
   view: EditorView;
   setView(v: EditorView): void;
@@ -144,7 +199,17 @@ interface EditorContextValue {
   ): Promise<void>;
   updateShot(
     shotId: string,
-    patch: Partial<Pick<EditorShot, "beatId" | "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
+    patch: Partial<
+      Pick<
+        EditorShot,
+        | "beatId"
+        | "startInBeat"
+        | "endInBeat"
+        | "imagePrompt"
+        | "motionPrompt"
+        | "referencedEntityIds"
+      >
+    >,
   ): Promise<void>;
   deleteShot(shotId: string): Promise<void>;
   splitShot(shotId: string, atInBeat: number): Promise<void>;
@@ -152,6 +217,20 @@ interface EditorContextValue {
   generateClip(shotId: string, model?: "ltx" | "hailuo"): Promise<void>;
   recommendShots(): Promise<void>;
   recommending: boolean;
+  createEntity(
+    name: string,
+    type: EditorEntity["type"],
+    description?: string,
+  ): Promise<void>;
+  updateEntity(
+    id: string,
+    patch: Partial<Pick<EditorEntity, "name" | "description">>,
+  ): Promise<void>;
+  deleteEntity(id: string): Promise<void>;
+  generateReference(id: string): Promise<void>;
+  extractEntities(): Promise<void>;
+  extracting: boolean;
+  tagShot(shotId: string, entityIds: string[]): Promise<void>;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -160,17 +239,20 @@ export function EditorProvider(props: {
   projectId: string;
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
+  initialEntities?: EditorEntity[];
   children: ReactNode;
 }) {
-  const { projectId, initialBeats, initialShots, children } = props;
+  const { projectId, initialBeats, initialShots, initialEntities = [], children } = props;
 
   const [state, dispatch] = useReducer(reducer, undefined, () => ({
     beats: withOffsets(initialBeats),
     shots: initialShots,
+    entities: initialEntities,
     view: "timeline" as EditorView,
     selection: null as EditorSelection,
   }));
   const [recommending, setRecommending] = useState(false);
+  const [extracting, setExtracting] = useState(false);
 
   const totalDuration = useMemo(() => totalDurationSeconds(state.beats), [state.beats]);
 
@@ -243,7 +325,17 @@ export function EditorProvider(props: {
   const updateShot = useCallback(
     async (
       shotId: string,
-      patch: Partial<Pick<EditorShot, "beatId" | "startInBeat" | "endInBeat" | "imagePrompt" | "motionPrompt">>,
+      patch: Partial<
+        Pick<
+          EditorShot,
+          | "beatId"
+          | "startInBeat"
+          | "endInBeat"
+          | "imagePrompt"
+          | "motionPrompt"
+          | "referencedEntityIds"
+        >
+      >,
     ) => {
       const prevShot = state.shots.find((s) => s.id === shotId);
       dispatch({ type: "patchShot", shotId, patch });
@@ -410,10 +502,152 @@ export function EditorProvider(props: {
     }
   }, [projectId]);
 
+  // ── Entity mutations ──
+
+  const createEntity = useCallback(
+    async (name: string, type: EditorEntity["type"], description?: string) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/entities`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, type, description }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] create entity failed:", await res.text());
+          return;
+        }
+        const entity = (await res.json()) as EditorEntity;
+        dispatch({ type: "addEntity", entity });
+      } catch (err) {
+        console.error("[editor-store] create entity error:", err);
+      }
+    },
+    [projectId],
+  );
+
+  const updateEntity = useCallback(
+    async (id: string, patch: Partial<Pick<EditorEntity, "name" | "description">>) => {
+      const prevEntity = state.entities.find((e) => e.id === id);
+      dispatch({ type: "patchEntity", entityId: id, patch });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/entities/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] update entity failed:", await res.text());
+          if (prevEntity) dispatch({ type: "patchEntity", entityId: id, patch: prevEntity });
+          return;
+        }
+        const updated = (await res.json()) as Partial<EditorEntity>;
+        // Spread-merge so client-only fields survive — the PATCH response
+        // carries the raw DB row + a fresh referenceSheetUrl.
+        dispatch({ type: "patchEntity", entityId: id, patch: updated });
+      } catch (err) {
+        console.error("[editor-store] update entity error:", err);
+        if (prevEntity) dispatch({ type: "patchEntity", entityId: id, patch: prevEntity });
+      }
+    },
+    [projectId, state.entities],
+  );
+
+  const deleteEntity = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/entities/${id}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          dispatch({ type: "removeEntity", entityId: id });
+        } else {
+          console.warn("[editor-store] delete entity failed:", await res.text());
+        }
+      } catch (err) {
+        console.error("[editor-store] delete entity error:", err);
+      }
+    },
+    [projectId],
+  );
+
+  const generateReference = useCallback(
+    async (id: string) => {
+      const prevEntity = state.entities.find((e) => e.id === id);
+      dispatch({ type: "patchEntity", entityId: id, patch: { referenceStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/entities/${id}/reference`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] generate reference failed:", await res.text());
+          if (prevEntity) {
+            dispatch({
+              type: "patchEntity",
+              entityId: id,
+              patch: { referenceStatus: prevEntity.referenceStatus },
+            });
+          }
+          return;
+        }
+        const updated = (await res.json()) as Partial<EditorEntity>;
+        // Spread-merge so client-only fields survive — the response
+        // carries the fresh referenceSheetUrl + referenceStatus: "done".
+        dispatch({ type: "patchEntity", entityId: id, patch: updated });
+      } catch (err) {
+        console.error("[editor-store] generate reference error:", err);
+        if (prevEntity) {
+          dispatch({
+            type: "patchEntity",
+            entityId: id,
+            patch: { referenceStatus: prevEntity.referenceStatus },
+          });
+        }
+      }
+    },
+    [projectId, state.entities],
+  );
+
+  const extractEntities = useCallback(async () => {
+    setExtracting(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/entities/extract`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        console.error("[editor-store] extract entities server error:", await res.text());
+        return;
+      }
+      const data = (await res.json()) as {
+        entities: EditorEntity[];
+        taggedShots: number;
+        created: number;
+        skipped: number;
+        shotTags: Record<string, string[]>;
+      };
+      // The extract response is the full authoritative entity list (raw
+      // rows + urls + shotCount) — replace wholesale, same idiom as
+      // recommendShots replacing the shot list.
+      dispatch({ type: "setEntities", entities: data.entities });
+      for (const [shotId, entityIds] of Object.entries(data.shotTags)) {
+        dispatch({ type: "patchShot", shotId, patch: { referencedEntityIds: entityIds } });
+      }
+    } catch (err) {
+      console.error("[editor-store] extract entities fetch failed:", err);
+    } finally {
+      setExtracting(false);
+    }
+  }, [projectId]);
+
+  const tagShot = useCallback(
+    (shotId: string, entityIds: string[]) => updateShot(shotId, { referencedEntityIds: entityIds }),
+    [updateShot],
+  );
+
   const value: EditorContextValue = {
     projectId,
     beats: state.beats,
     shots: state.shots,
+    entities: state.entities,
     totalDuration,
     view: state.view,
     setView,
@@ -428,6 +662,13 @@ export function EditorProvider(props: {
     generateClip,
     recommendShots,
     recommending,
+    createEntity,
+    updateEntity,
+    deleteEntity,
+    generateReference,
+    extractEntities,
+    extracting,
+    tagShot,
   };
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
@@ -477,4 +718,19 @@ export function beatsSpanned(shot: EditorShot, beats: EditorBeat[]): EditorBeat[
       b.startSeconds < range.end &&
       b.endSeconds > range.start,
   );
+}
+
+/**
+ * Live shot count for an entity, recomputed from the current `shots` slice
+ * rather than trusting the server's as-fetched `shotCount` — see the store
+ * header comment for the single-source-of-truth rationale.
+ */
+export function entityShotCount(entityId: string, shots: EditorShot[]): number {
+  return shots.filter((s) => (s.referencedEntityIds ?? []).includes(entityId)).length;
+}
+
+/** Every entity tagged onto a shot, in entity-list order. */
+export function entitiesOfShot(shot: EditorShot, entities: EditorEntity[]): EditorEntity[] {
+  const ids = shot.referencedEntityIds ?? [];
+  return entities.filter((e) => ids.includes(e.id));
 }
