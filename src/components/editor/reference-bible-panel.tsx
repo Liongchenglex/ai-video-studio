@@ -9,9 +9,11 @@
  * as-fetched `entity.shotCount`, which goes stale the instant a shot is
  * tagged/untagged locally (see the store's header comment for why).
  *
- * Clicking a card expands it inline for rename/redraw/delete. The footer
- * adds entities by hand or via Claude auto-extract. This component makes
- * no direct network calls — every mutation goes through `useEditor()`.
+ * Clicking a card expands it inline for rename/redraw/delete; clicking the
+ * sheet thumbnail (or the expanded preview) opens a full-screen lightbox so
+ * the multi-view sheet can actually be inspected. The footer adds entities
+ * by hand or via Claude auto-extract. This component makes no direct
+ * network calls — every mutation goes through `useEditor()`.
  */
 "use client";
 
@@ -53,6 +55,10 @@ export function ReferenceBiblePanel() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [extractMessage, setExtractMessage] = useState<string | null>(null);
+  // Lightbox target — held as an id and resolved each render so the viewer
+  // stays fresh if the entity is renamed/redrawn/deleted while open.
+  const [viewerId, setViewerId] = useState<string | null>(null);
+  const viewerEntity = viewerId ? entities.find((e) => e.id === viewerId) ?? null : null;
 
   useEffect(() => {
     if (!extractMessage) return;
@@ -102,6 +108,7 @@ export function ReferenceBiblePanel() {
                 shots={shots}
                 expanded={expandedId === entity.id}
                 onToggle={() => setExpandedId((cur) => (cur === entity.id ? null : entity.id))}
+                onViewSheet={() => setViewerId(entity.id)}
               />
             ))}
           </div>
@@ -146,7 +153,65 @@ export function ReferenceBiblePanel() {
           Each entity = one multi-view reference sheet. Tagged shots condition on it.
         </p>
       </div>
+
+      {viewerEntity?.referenceSheetUrl && (
+        <SheetLightbox entity={viewerEntity} onClose={() => setViewerId(null)} />
+      )}
     </aside>
+  );
+}
+
+// ─── Full-screen sheet viewer ─────────────────────────────────────────
+
+function SheetLightbox({
+  entity,
+  onClose,
+}: {
+  entity: EditorEntity;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/85 p-6"
+      onClick={onClose}
+      role="dialog"
+      aria-label={`${entity.name} reference sheet`}
+    >
+      <button
+        type="button"
+        className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white transition hover:bg-white/25"
+        onClick={onClose}
+        title="Close (Esc)"
+      >
+        <X className="size-5" />
+      </button>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={entity.referenceSheetUrl!}
+        alt={`${entity.name} reference sheet`}
+        className="max-h-[82vh] max-w-[92vw] rounded object-contain shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      />
+      <div
+        className="max-w-2xl text-center text-white"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-sm font-semibold">
+          {entity.name} <span className="font-normal text-white/60">· {entity.type}</span>
+        </p>
+        {entity.description && (
+          <p className="mt-1 text-xs leading-5 text-white/70">{entity.description}</p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -157,11 +222,13 @@ function EntityCard({
   shots,
   expanded,
   onToggle,
+  onViewSheet,
 }: {
   entity: EditorEntity;
   shots: EditorShot[];
   expanded: boolean;
   onToggle: () => void;
+  onViewSheet: () => void;
 }) {
   const { updateEntity, deleteEntity, generateReference } = useEditor();
   const shotCount = entityShotCount(entity.id, shots);
@@ -187,7 +254,20 @@ function EntityCard({
   return (
     <Card size="sm" className={`gap-2 p-2 ${failed ? "ring-2 ring-destructive" : ""}`}>
       <div className="flex cursor-pointer items-center gap-2" onClick={onToggle}>
-        <div className="relative size-10 shrink-0 overflow-hidden rounded bg-muted">
+        <div
+          className={`relative size-10 shrink-0 overflow-hidden rounded bg-muted ${
+            entity.referenceSheetUrl ? "cursor-zoom-in" : ""
+          }`}
+          title={entity.referenceSheetUrl ? "View reference sheet" : undefined}
+          onClick={
+            entity.referenceSheetUrl
+              ? (e) => {
+                  e.stopPropagation(); // view the sheet, don't toggle the card
+                  onViewSheet();
+                }
+              : undefined
+          }
+        >
           {entity.referenceSheetUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -216,6 +296,16 @@ function EntityCard({
 
       {expanded && (
         <div className="space-y-2 pt-1">
+          {entity.referenceSheetUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={entity.referenceSheetUrl}
+              alt={`${entity.name} reference sheet`}
+              title="View full size"
+              className="w-full cursor-zoom-in rounded border object-cover"
+              onClick={onViewSheet}
+            />
+          )}
           <div className="space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Name

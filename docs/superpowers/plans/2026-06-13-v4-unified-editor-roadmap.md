@@ -19,14 +19,20 @@ one before it.
 |---|---|---|---|
 | **1. Beat data model + per-beat VO** | `2026-06-13-v4-phase1-beat-data-model-and-vo.md` ✅ written | `beats` + `entities` tables, `shots` gains `beatId` + offsets + `referencedEntityIds`; segmentation; per-beat ElevenLabs VO with prosody-continuity; sequential timing helper; backfill of existing projects | — (foundation) |
 | **2. Unified editor + two views** | `2026-07-02-v4-phase2-unified-editor.md` ✅ **shipped 2026-07-03** | Beat/shot two-layer timeline, inline editable script (re-voices one beat), Timeline⇄Storyboard toggle over one shared store, inspector; legacy continuous-VO model retired | Phase 1 |
-| **3. Batch "Generate all"** | _to be written_ | Server-side fan-out for all images/clips, queue + per-item status surfaced in the Storyboard view, retry | Phase 2 ✅ |
+| **3. Batch "Generate all"** | _to be written_ | Server-side fan-out for all images/clips **and missing entity reference sheets** (sheets generate FIRST so every shot in the same batch is entity-conditioned — decision 2026-07-04), queue + per-item status surfaced in the Storyboard view, retry, cost preview + confirm step before dispatch | Phase 2 ✅ + Phase 4 ✅ |
 | **4. Reference Bible (F-16)** | `2026-07-04-v4-phase4-reference-bible.md` ✅ **shipped 2026-07-04** | `entities` CRUD + multi-view reference-sheet generation, auto-extract + auto-tag, single-entity FLUX conditioning (multi-entity later) | Phase 2 ✅ (UI rail) + Phase 1 (`referencedEntityIds`) |
 
 **Note on Phase 3 (still to be written):** it must route its fan-out through
 the same `POST /shots/:shotId/image` endpoint Phase 4 already conditions on
 the primary tagged entity — batch generation therefore does not need any
 extra entity-conditioning work of its own; it inherits it for free by calling
-the existing route per shot.
+the existing route per shot. **Batch ordering (decision 2026-07-04): the
+"Generate all" fan-out includes cast & location reference sheets — every
+tagged entity with `referenceStatus` ≠ `done` gets its sheet generated in a
+first wave (via the existing `POST /entities/:entityId/reference`), and only
+then do the shot images fan out, so no shot in the batch generates
+unconditioned when its entity's sheet was merely pending.** Include a cost
+preview + confirm step before dispatch (sheets + images + clips itemized).
 
 **Phase 2 docs:** [`docs/feature08/feature.md`](../../feature08/feature.md) ·
 [`docs/feature08/testcase-v4-phase2.md`](../../feature08/testcase-v4-phase2.md) ·
