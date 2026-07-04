@@ -15,7 +15,7 @@
  */
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { User, Mountain, Box, Loader2, Sparkles, Plus, X, RefreshCw, Trash2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -48,25 +48,11 @@ const TYPE_OPTIONS: Array<{ value: EditorEntity["type"]; label: string }> = [
   { value: "object", label: "Object" },
 ];
 
-function taggedShotCount(shots: EditorShot[]): number {
-  return shots.filter((s) => (s.referencedEntityIds ?? []).length > 0).length;
-}
-
 export function ReferenceBiblePanel() {
   const { entities, shots, extractEntities, extracting } = useEditor();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [extractMessage, setExtractMessage] = useState<string | null>(null);
-
-  // Always-fresh snapshot of the store, so the post-extract summary below
-  // can diff against whatever `entities`/`shots` looked like right before
-  // the call — the store's extractEntities() returns void, not counts.
-  const entitiesRef = useRef(entities);
-  const shotsRef = useRef(shots);
-  useEffect(() => {
-    entitiesRef.current = entities;
-    shotsRef.current = shots;
-  }, [entities, shots]);
 
   useEffect(() => {
     if (!extractMessage) return;
@@ -74,13 +60,25 @@ export function ReferenceBiblePanel() {
     return () => clearTimeout(timer);
   }, [extractMessage]);
 
+  // If the expanded card's entity is deleted (locally or by the extract
+  // wholesale-replace), drop the stale expandedId so a later card never
+  // re-expands under a reused id.
+  useEffect(() => {
+    if (expandedId && !entities.some((e) => e.id === expandedId)) {
+      setExpandedId(null);
+    }
+  }, [expandedId, entities]);
+
   const handleExtract = async () => {
-    const beforeEntities = entities.length;
-    const beforeTagged = taggedShotCount(shots);
-    await extractEntities();
-    const found = Math.max(0, entitiesRef.current.length - beforeEntities);
-    const tagged = Math.max(0, taggedShotCount(shotsRef.current) - beforeTagged);
-    setExtractMessage(`${found} found · ${tagged} shots tagged`);
+    // The store's extractEntities() returns the exact counts from the API
+    // response — no need to diff store snapshots (which would be stale
+    // right after the await, since passive effects run after paint).
+    const result = await extractEntities();
+    setExtractMessage(
+      result
+        ? `${result.created} found · ${result.taggedShots} shots tagged`
+        : "Extraction failed",
+    );
   };
 
   return (
@@ -217,21 +215,31 @@ function EntityCard({
       </div>
 
       {expanded && (
-        <div className="space-y-2 pt-1" onClick={(e) => e.stopPropagation()}>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={persistName}
-            className="h-7 text-xs"
-          />
-          <Textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onBlur={persistDescription}
-            rows={3}
-            placeholder="Visual description for the reference sheet…"
-            className="text-xs"
-          />
+        <div className="space-y-2 pt-1">
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Name
+            </p>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={persistName}
+              className="h-7 text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Description
+            </p>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={persistDescription}
+              rows={3}
+              placeholder="Visual description for the reference sheet…"
+              className="text-xs"
+            />
+          </div>
           <div className="flex gap-1.5">
             <Button
               size="sm"
@@ -276,14 +284,19 @@ function AddEntityForm({ onDone }: { onDone: () => void }) {
   const [type, setType] = useState<EditorEntity["type"]>("character");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
     setCreating(true);
     try {
-      await createEntity(trimmed, type, description.trim() || undefined);
-      onDone();
+      const ok = await createEntity(trimmed, type, description.trim() || undefined);
+      if (ok) {
+        onDone();
+      } else {
+        setFailed(true);
+      }
     } finally {
       setCreating(false);
     }
@@ -294,7 +307,10 @@ function AddEntityForm({ onDone }: { onDone: () => void }) {
       <Input
         placeholder="Name"
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        onChange={(e) => {
+          setName(e.target.value);
+          setFailed(false);
+        }}
         className="h-7 text-xs"
       />
       <Select value={type} onValueChange={(v) => setType(v as EditorEntity["type"])}>
@@ -337,6 +353,11 @@ function AddEntityForm({ onDone }: { onDone: () => void }) {
           Cancel
         </Button>
       </div>
+      {failed && (
+        <p className="text-[10px] text-destructive">
+          Couldn&apos;t create — an entity with this name may already exist.
+        </p>
+      )}
     </div>
   );
 }

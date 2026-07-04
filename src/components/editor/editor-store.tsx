@@ -221,14 +221,14 @@ interface EditorContextValue {
     name: string,
     type: EditorEntity["type"],
     description?: string,
-  ): Promise<void>;
+  ): Promise<boolean>;
   updateEntity(
     id: string,
     patch: Partial<Pick<EditorEntity, "name" | "description">>,
   ): Promise<void>;
   deleteEntity(id: string): Promise<void>;
   generateReference(id: string): Promise<void>;
-  extractEntities(): Promise<void>;
+  extractEntities(): Promise<{ created: number; taggedShots: number } | null>;
   extracting: boolean;
   tagShot(shotId: string, entityIds: string[]): Promise<void>;
 }
@@ -505,7 +505,11 @@ export function EditorProvider(props: {
   // ── Entity mutations ──
 
   const createEntity = useCallback(
-    async (name: string, type: EditorEntity["type"], description?: string) => {
+    async (
+      name: string,
+      type: EditorEntity["type"],
+      description?: string,
+    ): Promise<boolean> => {
       try {
         const res = await fetch(`/api/projects/${projectId}/entities`, {
           method: "POST",
@@ -514,13 +518,15 @@ export function EditorProvider(props: {
         });
         if (!res.ok) {
           console.warn("[editor-store] create entity failed:", await res.text());
-          return;
+          return false;
         }
         const row = (await res.json()) as Partial<EditorEntity>;
         const entity: EditorEntity = { shotCount: 0, ...row } as EditorEntity;
         dispatch({ type: "addEntity", entity });
+        return true;
       } catch (err) {
         console.error("[editor-store] create entity error:", err);
+        return false;
       }
     },
     [projectId],
@@ -603,7 +609,10 @@ export function EditorProvider(props: {
     [projectId],
   );
 
-  const extractEntities = useCallback(async () => {
+  const extractEntities = useCallback(async (): Promise<{
+    created: number;
+    taggedShots: number;
+  } | null> => {
     setExtracting(true);
     try {
       const res = await fetch(`/api/projects/${projectId}/entities/extract`, {
@@ -611,7 +620,7 @@ export function EditorProvider(props: {
       });
       if (!res.ok) {
         console.error("[editor-store] extract entities server error:", await res.text());
-        return;
+        return null;
       }
       const data = (await res.json()) as {
         entities: EditorEntity[];
@@ -627,8 +636,12 @@ export function EditorProvider(props: {
       for (const [shotId, entityIds] of Object.entries(data.shotTags)) {
         dispatch({ type: "patchShot", shotId, patch: { referencedEntityIds: entityIds } });
       }
+      // The response is the exact authoritative counts — return them so
+      // callers don't have to diff stale store snapshots after the await.
+      return { created: data.created, taggedShots: data.taggedShots };
     } catch (err) {
       console.error("[editor-store] extract entities fetch failed:", err);
+      return null;
     } finally {
       setExtracting(false);
     }
