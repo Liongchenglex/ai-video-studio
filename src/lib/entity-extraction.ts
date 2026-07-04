@@ -13,6 +13,7 @@
  *      names -> ids case-insensitively, drops unknowns, caps 8/shot.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { entityTypeEnum } from "@/lib/db/schema";
 
 const anthropic = new Anthropic();
 
@@ -21,7 +22,7 @@ const MAX_NAME_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 2000;
 const MAX_ENTITIES_PER_SHOT = 8;
 const SHOT_BATCH_SIZE = 40;
-const VALID_TYPES = ["character", "location", "object"] as const;
+const VALID_TYPES = entityTypeEnum.enumValues;
 type EntityType = (typeof VALID_TYPES)[number];
 
 // ─── extractEntities ───────────────────────────────────────────────────────
@@ -74,6 +75,18 @@ Return AT MOST ${MAX_ENTITIES} entities, ordered with the most narratively centr
 
 Call save_entities with your array.`;
 
+/** Builds the exclusion block appended to the system prompt when the project already has registered entities. */
+function buildExistingEntitiesBlock(existingNames: string[]): string {
+  const list = existingNames.map((n) => `- ${n}`).join("\n");
+  return `
+
+## ALREADY-REGISTERED ENTITIES — DO NOT RE-PROPOSE
+The following entities are ALREADY in this project's reference bible:
+${list}
+
+These entities must NOT be re-proposed — not under the same name, an alias, a title, an epithet, or any other variant referring to the same person/place/thing. For example, if "Liu Bang" is listed above, do NOT propose "Liu Bang", "Emperor Gaozu", "the Emperor", or any other name that refers to the same individual. Only propose entities that are genuinely NEW and not already covered by the list above.`;
+}
+
 /** Validates and clamps one raw extracted-entity candidate. Returns null to drop it. */
 function validateExtractedEntity(raw: unknown): ExtractedEntity | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -93,13 +106,26 @@ function validateExtractedEntity(raw: unknown): ExtractedEntity | null {
  * forced-tool call; response is validated/clamped (invalid types dropped,
  * name/description truncated to caps, empty names dropped) and capped at
  * MAX_ENTITIES.
+ *
+ * existingNames — names of entities already registered in the project's
+ * reference bible (pre-insert). When non-empty, the system prompt is
+ * extended with an explicit exclusion block so Claude doesn't re-propose
+ * an existing entity under an alias, title, or epithet (which the caller's
+ * exact-string dedup can't catch). Always pass the pre-insert list.
  */
-export async function extractEntities(script: string): Promise<ExtractedEntity[]> {
+export async function extractEntities(
+  script: string,
+  existingNames: string[],
+): Promise<ExtractedEntity[]> {
+  const systemPrompt =
+    existingNames.length > 0
+      ? EXTRACT_SYSTEM_PROMPT + buildExistingEntitiesBlock(existingNames)
+      : EXTRACT_SYSTEM_PROMPT;
   const tStart = Date.now();
   const stream = anthropic.messages.stream({
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 4000,
-    system: EXTRACT_SYSTEM_PROMPT,
+    system: systemPrompt,
     tools: [EXTRACT_TOOL],
     tool_choice: { type: "tool", name: "save_entities" },
     messages: [

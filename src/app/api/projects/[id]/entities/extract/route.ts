@@ -5,10 +5,13 @@
  * Flow: load the project's beats (joined script text), existing entities,
  * and all shots with their spanned-beat narration (anchor-beat spillover
  * model, computed server-side — mirrors beatsSpanned in editor-store.tsx) ->
- * extractEntities(script) -> insert entities whose lowercased name isn't
- * already present (sheets are NOT generated here — explicit per-entity,
- * Task 2) -> tagShots(...) -> overwrite referencedEntityIds only for the
- * shots the tagger actually returned an entry for.
+ * extractEntities(script, existingNames) — the pre-insert existing entity
+ * names are passed so Claude's prompt excludes them (and their aliases) from
+ * re-proposal -> insert entities whose lowercased name isn't already present
+ * (exact-string dedup as a second-layer safety net; sheets are NOT generated
+ * here — explicit per-entity, Task 2) -> tagShots(...) -> overwrite
+ * referencedEntityIds only for the shots the tagger actually returned an
+ * entry for.
  *
  * Response: { entities, taggedShots, created, skipped, shotTags } where
  * shotTags is { [shotId]: string[] } — the entity-id arrays written per
@@ -110,7 +113,8 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   if (fullScript.length > 0) {
     try {
-      const extracted = await extractEntities(fullScript);
+      const existingNames = existingEntities.map((e) => e.name);
+      const extracted = await extractEntities(fullScript, existingNames);
 
       const nameSeen = new Set(existingEntities.map((e) => e.name.trim().toLowerCase()));
       const inserted: (typeof entities.$inferSelect)[] = [];
