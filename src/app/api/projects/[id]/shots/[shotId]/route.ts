@@ -1,15 +1,20 @@
 /**
- * PATCH  /api/projects/[id]/shots/[shotId] — update bounds and/or prompts
+ * PATCH  /api/projects/[id]/shots/[shotId] — update bounds, prompts, and/or
+ *        the tagged reference-bible entities
  * DELETE /api/projects/[id]/shots/[shotId] — remove a shot
  *
  * PATCH validates bounds against the anchor-beat spillover model: the shot
  * must start inside its (possibly re-anchored) beat, may spill past it, and
  * must not overlap any other shot on the timeline (absolute ranges).
+ *
+ * `referencedEntityIds` (Reference Bible tagging, F-16) is validated
+ * independently of bounds/prompts: at most 8 UUIDs, every id must belong to
+ * an entity in this same project (cross-table authorization).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, shots, beats } from "@/lib/db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { projects, shots, beats, entities } from "@/lib/db/schema";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -62,6 +67,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     endInBeat: number;
     imagePrompt: string;
     motionPrompt: string;
+    referencedEntityIds: string[];
   }>;
   try {
     body = await request.json();
@@ -151,6 +157,24 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       return badRequestResponse("motionPrompt too long (max 2000 characters)");
     }
     updates.motionPrompt = p;
+  }
+
+  if (body.referencedEntityIds !== undefined) {
+    const ids = body.referencedEntityIds;
+    if (!Array.isArray(ids) || ids.length > 8 || !ids.every((v) => typeof v === "string" && isValidUUID(v))) {
+      return badRequestResponse("referencedEntityIds must be an array of at most 8 UUIDs");
+    }
+    if (ids.length > 0) {
+      const owned = await db
+        .select({ id: entities.id })
+        .from(entities)
+        .where(and(eq(entities.projectId, id), inArray(entities.id, ids)));
+      const ownedIds = new Set(owned.map((e) => e.id));
+      if (!ids.every((eid) => ownedIds.has(eid))) {
+        return badRequestResponse("entity does not belong to this project");
+      }
+    }
+    updates.referencedEntityIds = ids;
   }
 
   if (Object.keys(updates).length === 0) {
