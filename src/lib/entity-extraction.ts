@@ -42,7 +42,7 @@ const EXTRACT_TOOL: Anthropic.Tool = {
     properties: {
       entities: {
         type: "array",
-        description: `At most ${MAX_ENTITIES} recurring entities, most narratively central first.`,
+        description: `At most ${MAX_ENTITIES} recurring entities (a maximum, not a target — fewer or none is fine), most narratively central first, with no two entries overlapping the same visual subject.`,
         items: {
           type: "object",
           properties: {
@@ -66,10 +66,18 @@ const EXTRACT_SYSTEM_PROMPT = `You extract recurring visual entities from a vide
 
 Identify entities (characters, locations, objects) that RECUR — they appear or are referenced in at least 2 distinct moments of the script. Skip one-off background details.
 
+Entities are PEOPLE, PLACES, and PHYSICAL THINGS only — never events, scenes, or abstract concepts. A battle, a ceremony, a dynasty's rise, or a era of history is not an entity; if it involves a recurring person, place, or object worth a reference image, extract that instead.
+
 For each entity return:
 - name: short, natural (a person's name, a place's name, an object's name).
 - type: "character", "location", or "object".
 - description: 1-3 sentences describing ONLY what it looks like — appearance, age, build, dress, materials, colors — written for an image generator. Do NOT describe plot, motivations, or backstory.
+
+## Selection discipline — fewer is better
+${MAX_ENTITIES} is a HARD MAXIMUM, not a target to fill. Only propose an entity when you are genuinely confident it (a) recurs across multiple distinct scenes and (b) is visually distinctive enough that a reference image is worth generating for it. Do not pad the list with marginal, one-off, or barely-recurring candidates just because budget remains — returning fewer than ${MAX_ENTITIES}, or even zero, is the correct answer whenever the script doesn't clearly warrant more (including when the existing bible below already covers it).
+
+## No subject overlap
+Never propose two entities whose visual subject substantially overlaps — either two of your own proposals, or one of yours against an already-registered entity (see below). "Iron plows and farming tools" and "Iron tools and weapons" are the same subject wearing different words; merge them into a single entity or drop the redundant one. If in doubt whether two candidates are the same thing, they are — merge or skip rather than propose both.
 
 Return AT MOST ${MAX_ENTITIES} entities, ordered with the most narratively central / most-recurring first.
 
@@ -84,7 +92,7 @@ function buildExistingEntitiesBlock(existingNames: string[]): string {
 The following entities are ALREADY in this project's reference bible:
 ${list}
 
-These entities must NOT be re-proposed — not under the same name, an alias, a title, an epithet, or any other variant referring to the same person/place/thing. For example, if "Liu Bang" is listed above, do NOT propose "Liu Bang", "Emperor Gaozu", "the Emperor", or any other name that refers to the same individual. Only propose entities that are genuinely NEW and not already covered by the list above.`;
+These entities must NOT be re-proposed — not under the same name, an alias, a title, an epithet, a near-synonym, or any other variant whose visual subject substantially overlaps one already listed. For example, if "Liu Bang" is listed above, do NOT propose "Liu Bang", "Emperor Gaozu", "the Emperor", or any other name that refers to the same individual. Likewise, if "Iron tools and weapons" is listed above, do NOT also propose "Iron plows and farming tools" or any other close variant of the same physical subject — that overlap is exactly as disqualifying as reusing the name. Only propose entities that are genuinely NEW and visually distinct from everything above. If, after applying this and the selection-discipline rules, nothing new clears the bar, return an empty array — that is a correct and expected result.`;
 }
 
 /** Validates and clamps one raw extracted-entity candidate. Returns null to drop it. */
