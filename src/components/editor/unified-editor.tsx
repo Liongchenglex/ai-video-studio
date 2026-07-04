@@ -5,9 +5,9 @@
  * entry gates (generate script → voice the script) and, once past them,
  * mounts the shared editor store and renders the whole
  * directing surface: a top bar (view toggle, counts, transport, voice,
- * recommend), a static "Cast & Locations" left rail (Reference Bible lands
- * later), a center column (video preview → inline script → Timeline or
- * Storyboard), and the sticky Inspector on the right.
+ * recommend), the Reference Bible left rail (Cast & Locations —
+ * ReferenceBiblePanel, F-16), a center column (video preview → inline
+ * script → Timeline or Storyboard), and the sticky Inspector on the right.
  *
  * The store owns beats/shots; this shell owns the gates and the transport
  * (sequential per-beat playback). The video preview follows the shot under
@@ -16,14 +16,7 @@
  */
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Play,
   Square,
@@ -43,6 +36,7 @@ import {
   useEditor,
   absoluteShotRange,
   type EditorBeat,
+  type EditorEntity,
   type EditorShot,
 } from "@/components/editor/editor-store";
 import { useBeatPlayback } from "@/components/editor/use-beat-playback";
@@ -50,6 +44,7 @@ import { TimelineView } from "@/components/editor/timeline-view";
 import { StoryboardView } from "@/components/editor/storyboard-view";
 import { ScriptStrip } from "@/components/editor/script-strip";
 import { Inspector } from "@/components/editor/inspector";
+import { ReferenceBiblePanel } from "@/components/editor/reference-bible-panel";
 
 interface UnifiedEditorProps {
   projectId: string;
@@ -57,6 +52,7 @@ interface UnifiedEditorProps {
   voiceId: string;
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
+  initialEntities: EditorEntity[];
   onVoiceChange: (voiceId: string) => void;
 }
 
@@ -73,6 +69,7 @@ export function UnifiedEditor({
   voiceId,
   initialBeats,
   initialShots,
+  initialEntities,
   onVoiceChange,
 }: UnifiedEditorProps) {
   const [script, setScript] = useState(initialScript ?? "");
@@ -129,7 +126,12 @@ export function UnifiedEditor({
 
   // ── Editor ──
   return (
-    <EditorProvider projectId={projectId} initialBeats={beats} initialShots={initialShots}>
+    <EditorProvider
+      projectId={projectId}
+      initialBeats={beats}
+      initialShots={initialShots}
+      initialEntities={initialEntities}
+    >
       <EditorShell voiceId={voiceId} onVoiceChange={onVoiceChange} />
     </EditorProvider>
   );
@@ -354,7 +356,7 @@ function EditorShell({
       />
 
       <div className="flex gap-4">
-        <LeftRail />
+        <ReferenceBiblePanel />
 
         {/* Center column. The video preview and script band belong to the
             timeline (directing) view; the storyboard is a scan-only board
@@ -536,23 +538,5 @@ function TopBar({
         </Button>
       </div>
     </div>
-  );
-}
-
-// ─── Left rail (static placeholder — Reference Bible lands in F-16) ────
-
-function LeftRail(): ReactNode {
-  return (
-    <aside className="hidden w-56 shrink-0 xl:block">
-      <div className="sticky top-4 space-y-3">
-        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Cast &amp; Locations
-        </h3>
-        <p className="text-xs leading-5 text-muted-foreground">
-          Recurring characters &amp; places get reference sheets that keep every shot on-model.
-          Arrives with the Reference Bible (F-16).
-        </p>
-      </div>
-    </aside>
   );
 }

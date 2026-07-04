@@ -27,16 +27,28 @@ import {
   Film,
   Play,
   Mic,
+  User,
+  Mountain,
+  Box,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   useEditor,
   absoluteShotRange,
   beatsSpanned,
+  entitiesOfShot,
   type EditorBeat,
+  type EditorEntity,
   type EditorShot,
 } from "@/components/editor/editor-store";
+
+const ENTITY_TYPE_ICON: Record<EditorEntity["type"], LucideIcon> = {
+  character: User,
+  location: Mountain,
+  object: Box,
+};
 
 const MIN_HALF = 0.25; // seconds — mirror the server split guard
 
@@ -238,8 +250,17 @@ function ShotEditPanel({
   beat: EditorBeat | null;
   playheadSeconds: number;
 }) {
-  const { projectId, beats, updateShot, deleteShot, splitShot, generateImage, generateClip } =
-    useEditor();
+  const {
+    projectId,
+    beats,
+    entities,
+    updateShot,
+    deleteShot,
+    splitShot,
+    generateImage,
+    generateClip,
+    tagShot,
+  } = useEditor();
   // Narration under the shot's time range — the concatenated text of every
   // beat it overlaps (shots may spill past their anchor beat).
   const spanned = beatsSpanned(shot, beats);
@@ -327,6 +348,18 @@ function ShotEditPanel({
   const hasClip = !!shot.clipUrl;
   const effectiveMode = previewMode === "clip" && !hasClip ? "image" : previewMode;
 
+  // Reference Bible tagging (v4.0 Phase 4) — the tagged entities and
+  // whether any of them has a usable ("done") reference sheet yet.
+  const taggedEntities = entitiesOfShot(shot, entities);
+  const hasReadyReference = taggedEntities.some((e) => e.referenceStatus === "done");
+  const toggleEntity = (entityId: string) => {
+    const current = shot.referencedEntityIds;
+    const updated = current.includes(entityId)
+      ? current.filter((id) => id !== entityId)
+      : [...current, entityId];
+    tagShot(shot.id, updated);
+  };
+
   return (
     <>
       {(hasImage || hasClip) && (
@@ -386,6 +419,40 @@ function ShotEditPanel({
             VO (narration)
           </p>
           <p className="text-xs font-mono">{voText}</p>
+        </div>
+      )}
+
+      {entities.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            In this shot
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {entities.map((entity) => {
+              const Icon = ENTITY_TYPE_ICON[entity.type];
+              const selected = shot.referencedEntityIds.includes(entity.id);
+              return (
+                <button
+                  key={entity.id}
+                  type="button"
+                  onClick={() => toggleEntity(entity.id)}
+                  className={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] transition ${
+                    selected
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  <Icon className="size-3" />
+                  {entity.name}
+                </button>
+              );
+            })}
+          </div>
+          {taggedEntities.length > 0 && !hasReadyReference && (
+            <p className="text-[10px] text-muted-foreground">
+              no reference sheet yet — Redraw in the rail
+            </p>
+          )}
         </div>
       )}
 

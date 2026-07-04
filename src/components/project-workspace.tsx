@@ -17,7 +17,7 @@ import { ProjectStepper } from "@/components/project-stepper";
 import { VideoBrief } from "@/components/video-brief";
 import { StepStyle } from "@/components/step-style";
 import { UnifiedEditor } from "@/components/editor/unified-editor";
-import type { EditorBeat, EditorShot } from "@/components/editor/editor-store";
+import type { EditorBeat, EditorEntity, EditorShot } from "@/components/editor/editor-store";
 
 interface ProjectWorkspaceProps {
   project: {
@@ -37,6 +37,7 @@ interface ProjectWorkspaceProps {
   };
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
+  initialEntities: EditorEntity[];
 }
 
 const statusLabel: Record<string, string> = {
@@ -46,7 +47,12 @@ const statusLabel: Record<string, string> = {
   published: "Published",
 };
 
-export function ProjectWorkspace({ project, initialBeats, initialShots }: ProjectWorkspaceProps) {
+export function ProjectWorkspace({
+  project,
+  initialBeats,
+  initialShots,
+  initialEntities,
+}: ProjectWorkspaceProps) {
   const router = useRouter();
 
   // ── Brief state ──
@@ -264,6 +270,7 @@ export function ProjectWorkspace({ project, initialBeats, initialShots }: Projec
           voiceId={voiceId}
           initialBeats={initialBeats}
           initialShots={initialShots}
+          initialEntities={initialEntities}
           onVoiceChange={handleVoiceChange}
         />
       )}

@@ -20,6 +20,7 @@ import {
   useEditor,
   absoluteShotRange,
   beatsSpanned,
+  entitiesOfShot,
   type EditorBeat,
   type EditorShot,
 } from "@/components/editor/editor-store";
@@ -74,9 +75,10 @@ function StatusBadge({ status }: { status: RollupStatus }) {
 }
 
 function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; index: number }) {
-  const { beats, selection, select, generateImage, generateClip } = useEditor();
+  const { beats, entities, selection, select, generateImage, generateClip } = useEditor();
   const status = rollupStatus(shot);
   const range = absoluteShotRange(shot, beats);
+  const taggedEntities = entitiesOfShot(shot, entities);
   // Shots may span beat boundaries — narration is every overlapped beat's
   // text, and the meta line reads "Beat 3" or "Beats 3–5" accordingly.
   const spanned = beatsSpanned(shot, beats);
@@ -143,6 +145,17 @@ function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; i
           </div>
           <p className="line-clamp-3 text-sm text-muted-foreground">&ldquo;{narration}&rdquo;</p>
         </div>
+
+        {/* Reference Bible tags (v4.0 Phase 4) */}
+        {taggedEntities.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {taggedEntities.map((entity) => (
+              <Badge key={entity.id} variant="outline" className="text-[10px]">
+                {entity.name}
+              </Badge>
+            ))}
+          </div>
+        )}
 
         {/* Actions */}
         <div className="mt-1 flex gap-2" onClick={(e) => e.stopPropagation()}>

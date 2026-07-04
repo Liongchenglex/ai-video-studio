@@ -54,9 +54,9 @@ export interface EditorShot {
   clipStatus: string;
   clipUrl: string | null;
   clipDurationSeconds: number | null;
-  // Optional (not yet populated by page.tsx until Task 7 wires the server
-  // mapping) — helpers and reducer paths must tolerate undefined via `?? []`.
-  referencedEntityIds?: string[];
+  // Reference Bible tagging (F-16) — populated server-side by page.tsx from
+  // the DB column (which defaults to [] there too); always an array here.
+  referencedEntityIds: string[];
 }
 
 export interface EditorEntity {
@@ -160,10 +160,10 @@ function reducer(state: State, action: Action): State {
         // Mirror the server's DELETE side-effect: strip the removed id from
         // every shot's local tag list so chips/badges disappear immediately.
         shots: state.shots.map((s) =>
-          (s.referencedEntityIds ?? []).includes(action.entityId)
+          s.referencedEntityIds.includes(action.entityId)
             ? {
                 ...s,
-                referencedEntityIds: (s.referencedEntityIds ?? []).filter(
+                referencedEntityIds: s.referencedEntityIds.filter(
                   (id) => id !== action.entityId,
                 ),
               }
@@ -735,11 +735,10 @@ export function beatsSpanned(shot: EditorShot, beats: EditorBeat[]): EditorBeat[
  * header comment for the single-source-of-truth rationale.
  */
 export function entityShotCount(entityId: string, shots: EditorShot[]): number {
-  return shots.filter((s) => (s.referencedEntityIds ?? []).includes(entityId)).length;
+  return shots.filter((s) => s.referencedEntityIds.includes(entityId)).length;
 }
 
 /** Every entity tagged onto a shot, in entity-list order. */
 export function entitiesOfShot(shot: EditorShot, entities: EditorEntity[]): EditorEntity[] {
-  const ids = shot.referencedEntityIds ?? [];
-  return entities.filter((e) => ids.includes(e.id));
+  return entities.filter((e) => shot.referencedEntityIds.includes(e.id));
 }
