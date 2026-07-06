@@ -1,7 +1,11 @@
 /**
- * Curated voice presets for v1.0 (6 voices: 3 female, 3 male).
- * Selected from ElevenLabs' default library for narration warmth and clarity.
- * Voice IDs are from ElevenLabs' pre-made voices.
+ * Curated fallback voices (used when GET /api/voices is unavailable) and
+ * the project default. IDs refreshed 2026-07-06 against the live
+ * ElevenLabs premade library — the original v1.0 preset IDs had gone
+ * stale (several legacy IDs now redirect to a single voice, one had
+ * changed gender). The full, always-current list with previews comes
+ * from /api/voices; this file only guarantees the selector never renders
+ * empty.
  */
 
 export interface VoicePreset {
@@ -14,45 +18,49 @@ export interface VoicePreset {
 export const VOICE_PRESETS: VoicePreset[] = [
   // Female voices
   {
-    id: "21m00Tcm4TlvDq8ikWAM",
-    name: "Rachel",
-    gender: "female",
-    description: "Calm, clear, American",
-  },
-  {
     id: "EXAVITQu4vr4xnSDxMaL",
-    name: "Bella",
+    name: "Sarah",
     gender: "female",
-    description: "Warm, engaging, American",
+    description: "Mature, reassuring, American",
   },
   {
-    id: "MF3mGyEYCl7XYWbV9V6O",
-    name: "Elli",
+    id: "Xb7hH8MSUJpSbSDYk0k2",
+    name: "Alice",
     gender: "female",
-    description: "Young, energetic, American",
+    description: "Clear, engaging educator, British",
+  },
+  {
+    id: "XrExE9yKIg1WjnnlVkGX",
+    name: "Matilda",
+    gender: "female",
+    description: "Knowledgeable, professional, American",
   },
   // Male voices
   {
-    id: "ErXwobaYiN019PkySvjV",
-    name: "Antoni",
+    id: "JBFqnCBsd6RMkjVDRZzb",
+    name: "George",
     gender: "male",
-    description: "Warm, conversational, American",
+    description: "Warm, captivating storyteller, British",
   },
   {
-    id: "VR6AewLTigWG4xSOukaG",
-    name: "Arnold",
+    id: "nPczCjzI2devNBz1zQrb",
+    name: "Brian",
     gender: "male",
-    description: "Deep, authoritative, American",
+    description: "Deep, resonant, comforting, American",
   },
   {
-    id: "pNInz6obpgDQGcFmaJgB",
-    name: "Adam",
+    id: "onwK4e9ZLuTAKqWW03F9",
+    name: "Daniel",
     gender: "male",
-    description: "Deep, narration, American",
+    description: "Steady broadcaster, British",
   },
 ];
 
-export const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel
+// Kept as the historical default: existing projects (and the schema
+// column default) reference this id, and ElevenLabs still voices it
+// (it resolves to a professional narration voice). New projects can pick
+// from the live library in the selector.
+export const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
 
 export function getVoicePreset(id: string): VoicePreset | undefined {
   return VOICE_PRESETS.find((v) => v.id === id);
