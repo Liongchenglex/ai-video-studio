@@ -59,7 +59,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .limit(1);
   if (!project || project.deletedAt) return notFoundResponse();
 
-  let body: { voText: string };
+  let body: { voText: string; entityNames?: string[] };
   try {
     body = await request.json();
   } catch {
@@ -68,6 +68,16 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!body.voText || body.voText.trim().length === 0) {
     return badRequestResponse("voText required");
   }
+  if (body.entityNames !== undefined) {
+    if (
+      !Array.isArray(body.entityNames) ||
+      body.entityNames.length > 8 ||
+      !body.entityNames.every((n) => typeof n === "string" && n.trim().length > 0 && n.length <= 120)
+    ) {
+      return badRequestResponse("entityNames must be an array of at most 8 names");
+    }
+  }
+  const entityNames = (body.entityNames ?? []).map((n) => n.trim());
 
   const styleContext = project.styleString
     ? `\n\nVisual style (how the image will LOOK — do not re-specify in your prompt): ${project.styleString}`
@@ -79,11 +89,19 @@ export async function POST(request: NextRequest, { params }: Params) {
       ? `\n\nThe video is about: ${project.brief}\n\nEvery subject you propose must be culturally / narratively consistent with this topic.`
       : "";
 
+  // Entities tagged on this shot are recurring cast/locations with fixed
+  // reference designs — the prompt should name them so the tag, the prompt
+  // text, and the reference-sheet conditioning all point at the same thing.
+  const entityContext =
+    entityNames.length > 0
+      ? `\n\nThis shot is tagged with these recurring entities from the project's reference bible: ${entityNames.join(", ")}. Build the prompt around them — name them explicitly as the subject (or setting) rather than describing generic stand-ins.`
+      : "";
+
   try {
     const stream = anthropic.messages.stream({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 400,
-      system: `You suggest a single image prompt for one shot in an AI video editor. The shot plays during the provided narration fragment.${projectContext}${styleContext}\n\nReturn via the save_image_prompt tool. Do not specify colors or art style — those come from the style layer.`,
+      system: `You suggest a single image prompt for one shot in an AI video editor. The shot plays during the provided narration fragment.${projectContext}${entityContext}${styleContext}\n\nReturn via the save_image_prompt tool. Do not specify colors or art style — those come from the style layer.`,
       tools: [IMAGE_TOOL],
       tool_choice: { type: "tool", name: "save_image_prompt" },
       messages: [

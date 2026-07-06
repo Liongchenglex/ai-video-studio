@@ -26,6 +26,9 @@ interface GenerateImageInput {
   styleString?: string | null;
   /** Optional reference sheet URL to condition the subject's appearance on. */
   referenceImageUrl?: string | null;
+  /** Name of the entity on the reference sheet — naming it in the prompt
+   *  ties the sheet to the scene even when the shot prompt doesn't. */
+  referenceSubjectName?: string | null;
 }
 
 interface GenerateImageResult {
@@ -42,8 +45,9 @@ export async function generateImage(
 ): Promise<GenerateImageResult> {
   const hasReference = !!input.referenceImageUrl;
 
+  const subject = input.referenceSubjectName?.trim() || "the subject";
   const basePrompt = hasReference
-    ? `Using the reference sheet as the exact appearance of the subject, render: ${input.stillImagePrompt}`
+    ? `The reference sheet defines the exact appearance of ${subject}. Render ${subject} in this scene: ${input.stillImagePrompt}`
     : input.stillImagePrompt;
   const prompt = input.styleString
     ? `${basePrompt}. Style: ${input.styleString}`

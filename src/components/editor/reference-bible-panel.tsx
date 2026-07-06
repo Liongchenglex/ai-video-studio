@@ -333,17 +333,24 @@ function EntityCard({
           <div className="flex gap-1.5">
             <Button
               size="sm"
-              variant="outline"
+              variant={entity.referenceSheetUrl ? "outline" : "default"}
               className="h-7 flex-1 text-[11px]"
               disabled={generating}
               onClick={() => generateReference(entity.id)}
+              title={
+                entity.referenceSheetUrl
+                  ? "Generate a new reference sheet, replacing this one"
+                  : "Generate this entity's reference sheet (~$0.04, 20-30s)"
+              }
             >
               {generating ? (
                 <Loader2 className="size-3 animate-spin" />
-              ) : (
+              ) : entity.referenceSheetUrl ? (
                 <RefreshCw className="size-3" />
+              ) : (
+                <Sparkles className="size-3" />
               )}
-              Redraw
+              {entity.referenceSheetUrl ? "Redraw" : "Generate"}
             </Button>
             <Button
               size="sm"
@@ -357,7 +364,7 @@ function EntityCard({
           </div>
           {failed && (
             <p className="text-[10px] text-destructive">
-              Sheet generation failed. Redraw to retry.
+              Sheet generation failed — use the button above to retry.
             </p>
           )}
         </div>

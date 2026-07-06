@@ -34,6 +34,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { VoiceSelector } from "@/components/voice-selector";
 import {
   useEditor,
   absoluteShotRange,
@@ -56,9 +57,17 @@ interface InspectorProps {
   playheadSeconds: number;
   onSeek: (s: number) => void;
   onPlayBeat: (startSeconds: number) => void;
+  voiceId: string;
+  onVoiceChange: (voiceId: string) => void;
 }
 
-export function Inspector({ playheadSeconds, onSeek, onPlayBeat }: InspectorProps) {
+export function Inspector({
+  playheadSeconds,
+  onSeek,
+  onPlayBeat,
+  voiceId,
+  onVoiceChange,
+}: InspectorProps) {
   const { beats, shots, selection } = useEditor();
 
   // Shot under the playhead — used for the null-selection preview.
@@ -104,7 +113,13 @@ export function Inspector({ playheadSeconds, onSeek, onPlayBeat }: InspectorProp
           playheadSeconds={playheadSeconds}
         />
       ) : selectedBeat ? (
-        <BeatPanel beat={selectedBeat} onPlayBeat={onPlayBeat} onSeek={onSeek} />
+        <BeatPanel
+          beat={selectedBeat}
+          onPlayBeat={onPlayBeat}
+          onSeek={onSeek}
+          voiceId={voiceId}
+          onVoiceChange={onVoiceChange}
+        />
       ) : playheadShot ? (
         <ActiveShotPreview shot={playheadShot} />
       ) : (
@@ -139,13 +154,18 @@ function BeatPanel({
   beat,
   onPlayBeat,
   onSeek,
+  voiceId,
+  onVoiceChange,
 }: {
   beat: EditorBeat;
   onPlayBeat: (startSeconds: number) => void;
   onSeek: (s: number) => void;
+  voiceId: string;
+  onVoiceChange: (voiceId: string) => void;
 }) {
   const { revoiceBeat } = useEditor();
   const needsRevoice = beat.voStatus === "failed" || !beat.voUrl;
+  const [showVoicePicker, setShowVoicePicker] = useState(false);
 
   return (
     <>
@@ -189,6 +209,28 @@ function BeatPanel({
           )}
           Re-voice
         </Button>
+      </div>
+
+      {/* Voice — lives here because a voice change takes effect beat by
+          beat: pick a voice, then Re-voice this beat (and any others you
+          want in the new voice). */}
+      <div className="space-y-1 pt-1">
+        <button
+          type="button"
+          onClick={() => setShowVoicePicker((v) => !v)}
+          className="text-[11px] text-muted-foreground underline underline-offset-2 transition hover:text-foreground"
+        >
+          {showVoicePicker ? "Hide voice picker" : "Change voice…"}
+        </button>
+        {showVoicePicker && (
+          <>
+            <VoiceSelector selectedVoiceId={voiceId} onSelect={onVoiceChange} />
+            <p className="text-[10px] text-muted-foreground">
+              A new voice applies when you re-voice — this beat first, then any other beats you
+              want to match.
+            </p>
+          </>
+        )}
       </div>
 
       <p className="text-[11px] text-muted-foreground">
@@ -310,10 +352,13 @@ function ShotEditPanel({
     if (!voText) return;
     setSuggestingImage(true);
     try {
+      // Tagged entities are named in the suggestion so the prompt text,
+      // the tag, and the reference-sheet conditioning stay in agreement.
+      const entityNames = entitiesOfShot(shot, entities).map((e) => e.name);
       const res = await fetch(`/api/projects/${projectId}/shots/suggest-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voText }),
+        body: JSON.stringify({ voText, ...(entityNames.length > 0 ? { entityNames } : {}) }),
       });
       if (res.ok) {
         const data = (await res.json()) as { imagePrompt: string };
@@ -450,7 +495,7 @@ function ShotEditPanel({
           </div>
           {taggedEntities.length > 0 && !hasReadyReference && (
             <p className="text-[10px] text-muted-foreground">
-              no reference sheet yet — Redraw in the rail
+              no reference sheet yet — Generate one in the rail to condition this shot
             </p>
           )}
         </div>

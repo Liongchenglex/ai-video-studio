@@ -30,7 +30,6 @@ import {
   Mic,
   LayoutList,
   LayoutGrid,
-  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -506,8 +505,6 @@ function EditorShell({
         canPlay={beats.some((b) => b.voUrl)}
         onPlay={() => play()}
         onStop={pause}
-        voiceId={voiceId}
-        onVoiceChange={onVoiceChange}
         recommending={recommending}
         onRecommend={recommendShots}
       />
@@ -570,6 +567,8 @@ function EditorShell({
                 playheadSeconds={playheadSeconds}
                 onSeek={onSeek}
                 onPlayBeat={onPlayBeat}
+                voiceId={voiceId}
+                onVoiceChange={onVoiceChange}
               />
             </CardContent>
           </Card>
@@ -591,8 +590,6 @@ function TopBar({
   canPlay,
   onPlay,
   onStop,
-  voiceId,
-  onVoiceChange,
   recommending,
   onRecommend,
 }: {
@@ -605,13 +602,9 @@ function TopBar({
   canPlay: boolean;
   onPlay: () => void;
   onStop: () => void;
-  voiceId: string;
-  onVoiceChange: (voiceId: string) => void;
   recommending: boolean;
   onRecommend: () => void;
 }) {
-  const [voiceOpen, setVoiceOpen] = useState(false);
-
   return (
     <div className="flex flex-wrap items-center gap-3 rounded border bg-muted/20 p-2">
       {/* View toggle */}
@@ -656,26 +649,8 @@ function TopBar({
       </Button>
 
       <div className="ml-auto flex items-center gap-2">
-        {/* Voice picker — collapsed into a popover so the full selector card
-            doesn't dominate the bar. */}
-        <div className="relative">
-          <Button size="sm" variant="outline" onClick={() => setVoiceOpen((o) => !o)}>
-            <Mic className="mr-1 h-3.5 w-3.5" /> Voice
-            <ChevronDown className="ml-1 h-3.5 w-3.5" />
-          </Button>
-          {voiceOpen && (
-            <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border bg-background p-2 shadow-lg">
-              <VoiceSelector
-                selectedVoiceId={voiceId}
-                onSelect={(id) => {
-                  onVoiceChange(id);
-                  setVoiceOpen(false);
-                }}
-              />
-            </div>
-          )}
-        </div>
-
+        {/* The voice picker lives in the beat inspector panel — voice
+            changes take effect beat by beat via Re-voice. */}
         <Button
           size="sm"
           variant={shotCount === 0 ? "default" : "outline"}

@@ -111,6 +111,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       stillImagePrompt: shot.imagePrompt,
       styleString: project.styleString,
       referenceImageUrl,
+      referenceSubjectName: primaryEntity?.name ?? null,
     });
 
     await db
