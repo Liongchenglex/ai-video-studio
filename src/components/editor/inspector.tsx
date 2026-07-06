@@ -357,16 +357,38 @@ function ShotEditPanel({
     try {
       // Tagged entities are named in the suggestion so the prompt text,
       // the tag, and the reference-sheet conditioning stay in agreement.
-      const entityNames = entitiesOfShot(shot, entities).map((e) => e.name);
+      // Untagged entities go along as "available": if the model uses one's
+      // exact name in the suggested prompt, we auto-tag it below — the
+      // suggestion and the chips never disagree.
+      const tagged = entitiesOfShot(shot, entities);
+      const entityNames = tagged.map((e) => e.name);
+      const taggedIds = new Set(tagged.map((e) => e.id));
+      const availableEntityNames = entities
+        .filter((e) => !taggedIds.has(e.id))
+        .map((e) => e.name)
+        .slice(0, 16);
       const res = await fetch(`/api/projects/${projectId}/shots/suggest-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voText, ...(entityNames.length > 0 ? { entityNames } : {}) }),
+        body: JSON.stringify({
+          voText,
+          ...(entityNames.length > 0 ? { entityNames } : {}),
+          ...(availableEntityNames.length > 0 ? { availableEntityNames } : {}),
+        }),
       });
       if (res.ok) {
         const data = (await res.json()) as { imagePrompt: string };
         setImagePrompt(data.imagePrompt);
         await updateShot(shot.id, { imagePrompt: data.imagePrompt, motionPrompt });
+        // Auto-tag (add-only, capped) any entity the suggestion named.
+        const lower = data.imagePrompt.toLowerCase();
+        const matchedIds = entities
+          .filter((e) => lower.includes(e.name.toLowerCase()))
+          .map((e) => e.id);
+        const merged = [...new Set([...shot.referencedEntityIds, ...matchedIds])].slice(0, 8);
+        if (merged.length !== shot.referencedEntityIds.length) {
+          await tagShot(shot.id, merged);
+        }
       }
     } finally {
       setSuggestingImage(false);

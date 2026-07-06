@@ -59,7 +59,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .limit(1);
   if (!project || project.deletedAt) return notFoundResponse();
 
-  let body: { voText: string; entityNames?: string[] };
+  let body: { voText: string; entityNames?: string[]; availableEntityNames?: string[] };
   try {
     body = await request.json();
   } catch {
@@ -68,16 +68,18 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!body.voText || body.voText.trim().length === 0) {
     return badRequestResponse("voText required");
   }
-  if (body.entityNames !== undefined) {
-    if (
-      !Array.isArray(body.entityNames) ||
-      body.entityNames.length > 8 ||
-      !body.entityNames.every((n) => typeof n === "string" && n.trim().length > 0 && n.length <= 120)
-    ) {
-      return badRequestResponse("entityNames must be an array of at most 8 names");
-    }
+  const validNameList = (v: unknown, max: number) =>
+    Array.isArray(v) &&
+    v.length <= max &&
+    v.every((n) => typeof n === "string" && n.trim().length > 0 && n.length <= 120);
+  if (body.entityNames !== undefined && !validNameList(body.entityNames, 8)) {
+    return badRequestResponse("entityNames must be an array of at most 8 names");
+  }
+  if (body.availableEntityNames !== undefined && !validNameList(body.availableEntityNames, 16)) {
+    return badRequestResponse("availableEntityNames must be an array of at most 16 names");
   }
   const entityNames = (body.entityNames ?? []).map((n) => n.trim());
+  const availableEntityNames = (body.availableEntityNames ?? []).map((n) => n.trim());
 
   const styleContext = project.styleString
     ? `\n\nVisual style (how the image will LOOK — do not re-specify in your prompt): ${project.styleString}`
@@ -92,10 +94,15 @@ export async function POST(request: NextRequest, { params }: Params) {
   // Entities tagged on this shot are recurring cast/locations with fixed
   // reference designs — the prompt should name them so the tag, the prompt
   // text, and the reference-sheet conditioning all point at the same thing.
+  // Untagged-but-available entities are offered too: when the scene depicts
+  // one, the model uses its EXACT name, which lets the client auto-tag it.
   const entityContext =
-    entityNames.length > 0
+    (entityNames.length > 0
       ? `\n\nThis shot is tagged with these recurring entities from the project's reference bible: ${entityNames.join(", ")}. Build the prompt around them — name them explicitly as the subject (or setting) rather than describing generic stand-ins.`
-      : "";
+      : "") +
+    (availableEntityNames.length > 0
+      ? `\n\nThe project's reference bible also contains these recurring entities: ${availableEntityNames.join(", ")}. If the scene you propose depicts one of them, refer to it by its EXACT name as written here (verbatim, so it can be linked to its reference design) instead of a generic description. Do not force them in when the narration doesn't call for them.`
+      : "");
 
   try {
     const stream = anthropic.messages.stream({
