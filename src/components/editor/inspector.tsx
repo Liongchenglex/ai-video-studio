@@ -510,12 +510,20 @@ function ShotEditPanel({
               }
               // Tagged: the body toggles (untags) like any chip; the small
               // text-insert icon drops the name into the image prompt;
-              // ★ marks the primary whose sheet conditions the image.
+              // ★ marks the primary whose sheet conditions the image. A
+              // tagged entity WITHOUT a finished sheet can never be primary
+              // — it renders dimmed with a dashed ring so the missing sheet
+              // is visible right on the chip.
+              const hasSheet = entity.referenceStatus === "done";
               return (
                 <span
                   key={entity.id}
-                  className={`flex items-center gap-1 rounded-full bg-primary px-2 py-1 text-[10px] text-primary-foreground ${
-                    isPrimary ? "ring-2 ring-amber-400" : ""
+                  className={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] text-primary-foreground ${
+                    isPrimary
+                      ? "bg-primary ring-2 ring-amber-400"
+                      : hasSheet
+                        ? "bg-primary"
+                        : "bg-primary/60 ring-1 ring-dashed ring-primary"
                   }`}
                 >
                   {isPrimary && (
@@ -527,7 +535,11 @@ function ShotEditPanel({
                   <button
                     type="button"
                     onClick={() => toggleEntity(entity.id)}
-                    title={`Untag ${entity.name}`}
+                    title={
+                      hasSheet
+                        ? `Untag ${entity.name}`
+                        : `Untag ${entity.name} — no reference sheet yet, so it can't condition the image (Generate one in the rail)`
+                    }
                     className="flex items-center gap-1 transition hover:opacity-80"
                   >
                     <Icon className="size-3" />
