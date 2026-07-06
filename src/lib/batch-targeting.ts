@@ -36,7 +36,8 @@ export async function computeBatchTargets(projectId: string): Promise<BatchTarge
   const taggedEntityIds = new Set<string>();
   for (const s of shotRows) for (const eid of s.referencedEntityIds ?? []) taggedEntityIds.add(eid);
 
-  const missing = (status: string | null) => status === "pending" || status === "failed";
+  const missing = (status: string | null) =>
+    (status ?? "pending") === "pending" || status === "failed";
 
   return {
     sheetEntityIds: entityRows
