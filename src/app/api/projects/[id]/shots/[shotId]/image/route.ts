@@ -16,8 +16,8 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, shots, entities, type Entity } from "@/lib/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { projects, shots } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import {
   getSession,
   unauthorizedResponse,
@@ -27,42 +27,9 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
-import { generateImage } from "@/lib/image-generation";
-import { getDownloadUrl } from "@/lib/r2";
+import { generateShotImage } from "@/lib/shot-image-generation";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
-
-/**
- * Resolves the shot's single primary conditioning entity, project-scoped:
- * the first tagged entity (in tag order) of type "character" with a "done"
- * reference sheet, else the first tagged entity (in tag order) with a "done"
- * sheet. Returns null if the shot has no tagged, ready entity.
- */
-async function resolvePrimaryEntity(
-  projectId: string,
-  referencedEntityIds: string[] | null | undefined,
-): Promise<Entity | null> {
-  const taggedIds = referencedEntityIds ?? [];
-  if (taggedIds.length === 0) return null;
-
-  const readyRows = await db
-    .select()
-    .from(entities)
-    .where(
-      and(
-        eq(entities.projectId, projectId),
-        inArray(entities.id, taggedIds),
-        eq(entities.referenceStatus, "done"),
-      ),
-    );
-  const readyById = new Map(readyRows.map((e) => [e.id, e]));
-  // Preserve tag order (DB row order is unspecified).
-  const ordered = taggedIds
-    .map((tid) => readyById.get(tid))
-    .filter((e): e is Entity => e !== undefined);
-
-  return ordered.find((e) => e.type === "character") ?? ordered[0] ?? null;
-}
 
 export async function POST(request: NextRequest, { params }: Params) {
   const rateLimitError = applyRateLimit(request, "generation");
@@ -90,45 +57,16 @@ export async function POST(request: NextRequest, { params }: Params) {
     return badRequestResponse("Shot has no image prompt");
   }
 
-  await db.update(shots).set({ imageStatus: "generating" }).where(eq(shots.id, shotId));
-
   try {
-    const primaryEntity = await resolvePrimaryEntity(id, shot.referencedEntityIds);
-    const referenceImageUrl = primaryEntity?.referenceSheetPath
-      ? await getDownloadUrl(primaryEntity.referenceSheetPath)
-      : null;
-
-    console.log(
-      `[shot/image] project=${id} shot=${shotId} | prompt: ${shot.imagePrompt.substring(0, 120)}... | ` +
-        (primaryEntity
-          ? `conditioned on entity=${primaryEntity.id} (${primaryEntity.name})`
-          : "unconditioned"),
-    );
-
-    const r2Key = `projects/${project.id}/shots/${shot.id}/image.png`;
-    const result = await generateImage({
-      r2Key,
-      stillImagePrompt: shot.imagePrompt,
-      styleString: project.styleString,
-      referenceImageUrl,
-      referenceSubjectName: primaryEntity?.name ?? null,
-    });
-
-    await db
-      .update(shots)
-      .set({ imagePath: result.r2Key, imageStatus: "done" })
-      .where(eq(shots.id, shotId));
-
-    console.log(`[shot/image] done: ${result.r2Key}`);
+    const result = await generateShotImage(project, shot);
     return NextResponse.json({
-      imagePath: result.r2Key,
-      imageUrl: result.downloadUrl,
+      imagePath: result.imagePath,
+      imageUrl: result.imageUrl,
       imageStatus: "done",
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error(`[shot/image] failed:`, msg);
-    await db.update(shots).set({ imageStatus: "failed" }).where(eq(shots.id, shotId)).catch(() => {});
     return NextResponse.json({ error: msg, imageStatus: "failed" }, { status: 500 });
   }
 }
