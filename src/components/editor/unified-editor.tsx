@@ -1,8 +1,13 @@
 /**
  * Unified directing editor (v4.0 Pillar B, mockup 01).
  *
- * One screen that replaces the old Script + Editor steps. It owns the two
- * entry gates (generate script → voice the script) and, once past them,
+ * One screen that replaces the old Script + Editor steps. It owns the
+ * staged entry flow — script generation starts AUTOMATICALLY on arrival
+ * (with a visible working state), then lands on a full-page script REVIEW
+ * stage where the user reads/edits the whole script before paying to
+ * voice it. The stages are derived from server data (script? beats?), so
+ * a user who leaves mid-review returns to the review stage, and the
+ * editor itself only ever appears once VO beats exist. Past the stages it
  * mounts the shared editor store and renders the whole
  * directing surface: a top bar (view toggle, counts, transport, voice,
  * recommend), the Reference Bible left rail (Cast & Locations —
@@ -49,6 +54,8 @@ import { ReferenceBiblePanel } from "@/components/editor/reference-bible-panel";
 interface UnifiedEditorProps {
   projectId: string;
   script: string | null;
+  /** Whether the project has a brief — auto-generation only fires with one. */
+  hasBrief: boolean;
   voiceId: string;
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
@@ -66,6 +73,7 @@ function formatClock(seconds: number): string {
 export function UnifiedEditor({
   projectId,
   script: initialScript,
+  hasBrief,
   voiceId,
   initialBeats,
   initialShots,
@@ -74,49 +82,68 @@ export function UnifiedEditor({
 }: UnifiedEditorProps) {
   const [script, setScript] = useState(initialScript ?? "");
   // Beats can arrive either from the server (props) or from voicing the
-  // script in gate 2; keep a local copy so the editor mounts with the right
-  // set once gate 2 completes.
+  // script in the review stage; keep a local copy so the editor mounts with
+  // the right set once voicing completes.
   const [beats, setBeats] = useState<EditorBeat[]>(initialBeats);
   const [generatingScript, setGeneratingScript] = useState(false);
   const [scriptError, setScriptError] = useState(false);
 
   const hasScript = script.trim().length > 0;
 
-  // ── Gate 1: no script ──
+  const generateScript = useCallback(async () => {
+    setScriptError(false);
+    setGeneratingScript(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/script/generate`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { script: string };
+        setScript(data.script);
+      } else {
+        setScriptError(true);
+      }
+    } catch {
+      setScriptError(true);
+    } finally {
+      setGeneratingScript(false);
+    }
+  }, [projectId]);
+
+  // ── Stage 1: no script → generation starts automatically ──
+  // The user arrived here deliberately (brief + style done), so the AI gets
+  // to work without another click; the working state below makes it visible.
+  // Fires once per mount; failures surface a manual retry.
+  const autoGenStarted = useRef(false);
+  useEffect(() => {
+    if (!hasScript && hasBrief && !autoGenStarted.current) {
+      autoGenStarted.current = true;
+      generateScript();
+    }
+  }, [hasScript, hasBrief, generateScript]);
+
   if (!hasScript) {
     return (
-      <GenerateScriptGate
-        projectId={projectId}
+      <GenerateScriptStage
+        hasBrief={hasBrief}
         generating={generatingScript}
         error={scriptError}
-        onGenerate={async () => {
-          setScriptError(false);
-          setGeneratingScript(true);
-          try {
-            const res = await fetch(`/api/projects/${projectId}/script/generate`, {
-              method: "POST",
-            });
-            if (res.ok) {
-              const data = (await res.json()) as { script: string };
-              setScript(data.script);
-            } else {
-              setScriptError(true);
-            }
-          } catch {
-            setScriptError(true);
-          } finally {
-            setGeneratingScript(false);
-          }
-        }}
+        onRetry={generateScript}
       />
     );
   }
 
-  // ── Gate 2: script but no beats ──
+  // ── Stage 2: script but no beats → full-page review before voicing ──
+  // Derived from server data, so leaving mid-review and coming back lands
+  // here again; the editor is only reachable once VO beats exist.
   if (beats.length === 0) {
     return (
-      <VoiceScriptGate
+      <ScriptReviewStage
         projectId={projectId}
+        script={script}
+        onScriptChange={setScript}
+        onRegenerate={generateScript}
+        regenerating={generatingScript}
         voiceId={voiceId}
         onVoiceChange={onVoiceChange}
         onVoiced={setBeats}
@@ -137,69 +164,119 @@ export function UnifiedEditor({
   );
 }
 
-// ─── Gate 1: generate script ──────────────────────────────────────────
+// ─── Stage 1: script generation (auto-started) ────────────────────────
 
-function GenerateScriptGate({
+function GenerateScriptStage({
+  hasBrief,
   generating,
   error,
-  onGenerate,
+  onRetry,
 }: {
-  projectId: string;
+  hasBrief: boolean;
   generating: boolean;
   error: boolean;
-  onGenerate: () => void;
+  onRetry: () => void;
 }) {
+  if (!hasBrief) {
+    return (
+      <Card>
+        <CardContent className="space-y-2 p-6 text-center">
+          <h2 className="text-lg font-semibold">Write your concept first</h2>
+          <p className="mx-auto max-w-md text-sm text-muted-foreground">
+            The script is written from your brief — go back to the Concept step and describe the
+            video, then return here.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
-      <CardContent className="space-y-4 p-6 text-center">
-        <div>
-          <h2 className="text-lg font-semibold">Generate the script</h2>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            The editor writes from your brief and style. Once the script exists you&rsquo;ll voice
-            it, then direct every shot on one screen.
-          </p>
-        </div>
-        <div className="flex items-center justify-center gap-3">
-          <Button onClick={onGenerate} disabled={generating}>
-            {generating ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Writing script…
-              </>
-            ) : (
-              <>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Generate script
-              </>
-            )}
-          </Button>
-          {error && <span className="text-sm text-destructive">Script generation failed. Try again.</span>}
-        </div>
+      <CardContent className="space-y-4 p-10 text-center">
+        {error ? (
+          <>
+            <h2 className="text-lg font-semibold">Script generation failed</h2>
+            <p className="mx-auto max-w-md text-sm text-muted-foreground">
+              Something went wrong while writing the script. Nothing was saved — try again.
+            </p>
+            <Button onClick={onRetry} disabled={generating}>
+              <Sparkles className="mr-2 h-4 w-4" />
+              Retry
+            </Button>
+          </>
+        ) : (
+          <>
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
+            <h2 className="text-lg font-semibold">Writing your script…</h2>
+            <p className="mx-auto max-w-md text-sm text-muted-foreground">
+              The AI is drafting the full narration from your brief and style. This takes about
+              30–60 seconds — you&rsquo;ll review and edit it before anything is voiced.
+            </p>
+          </>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-// ─── Gate 2: voice the script ─────────────────────────────────────────
+// ─── Stage 2: review the script, then voice it ────────────────────────
 
-function VoiceScriptGate({
+function ScriptReviewStage({
   projectId,
+  script,
+  onScriptChange,
+  onRegenerate,
+  regenerating,
   voiceId,
   onVoiceChange,
   onVoiced,
 }: {
   projectId: string;
+  script: string;
+  onScriptChange: (script: string) => void;
+  onRegenerate: () => void;
+  regenerating: boolean;
   voiceId: string;
   onVoiceChange: (voiceId: string) => void;
   onVoiced: (beats: EditorBeat[]) => void;
 }) {
   const [voicing, setVoicing] = useState(false);
   const [error, setError] = useState(false);
+  const [draft, setDraft] = useState(script);
+  const [saving, setSaving] = useState(false);
+  // Regenerate replaces the script from outside — resync the textarea.
+  useEffect(() => setDraft(script), [script]);
+
+  const words = draft.trim().length === 0 ? 0 : draft.trim().split(/\s+/).length;
+  const estSeconds = Math.round((words / 150) * 60); // 150 wpm baseline
+  const estClock = `${Math.floor(estSeconds / 60)}:${(estSeconds % 60).toString().padStart(2, "0")}`;
+
+  // Autosave on blur so a user who leaves mid-review keeps their edits —
+  // this stage is re-entered on every visit until the script is voiced.
+  const persistDraft = async () => {
+    if (draft === script) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ script: draft }),
+      });
+      if (res.ok) onScriptChange(draft);
+      else console.warn("[review] script autosave failed:", await res.text());
+    } catch (err) {
+      console.error("[review] script autosave error:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleVoice = async () => {
     setError(false);
     setVoicing(true);
     try {
+      await persistDraft(); // never voice an unsaved edit
       const gen = await fetch(`/api/projects/${projectId}/beats/generate`, { method: "POST" });
       if (!gen.ok) {
         setError(true);
@@ -229,32 +306,69 @@ function VoiceScriptGate({
   return (
     <Card>
       <CardContent className="space-y-4 p-6">
-        <div>
-          <h2 className="text-lg font-semibold">Voice the script</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            We segment the script into beats and voice each one so you can re-voice a single line
-            later without redoing the whole track. This takes ~30–90 seconds.
-          </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">✨ Your script is ready — review it</h2>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Read and edit the full script now: changes here are free, while edits after voicing
+              re-voice one line at a time. When it reads right, voice it below.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRegenerate}
+            disabled={regenerating || voicing}
+            title="Throw this draft away and write a new one from the brief"
+          >
+            {regenerating ? (
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="mr-1 size-3.5" />
+            )}
+            Regenerate
+          </Button>
+        </div>
+
+        <div className="space-y-1">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={persistDraft}
+            disabled={voicing || regenerating}
+            maxLength={50000}
+            className="min-h-[50vh] w-full resize-y rounded border bg-background p-4 text-sm leading-7 focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <div className="flex justify-between text-[11px] text-muted-foreground">
+            <span>
+              {words} words · ~{estClock} at 150 wpm
+            </span>
+            <span>{saving ? "Saving…" : draft !== script ? "Unsaved edits (saved on blur)" : "Saved"}</span>
+          </div>
         </div>
 
         <VoiceSelector selectedVoiceId={voiceId} onSelect={onVoiceChange} disabled={voicing} />
 
         <div className="flex items-center gap-3">
-          <Button onClick={handleVoice} disabled={voicing}>
+          <Button onClick={handleVoice} disabled={voicing || regenerating}>
             {voicing ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Voicing the script…
+                Voicing the script… (~30–90s)
               </>
             ) : (
               <>
                 <Mic className="mr-2 h-4 w-4" />
-                Voice the script
+                Voice the script →
               </>
             )}
           </Button>
           {error && <span className="text-sm text-destructive">Voicing failed. Try again.</span>}
         </div>
+        <p className="text-[11px] text-muted-foreground">
+          Voicing segments the script into beats — each sentence gets its own audio so you can
+          later re-voice a single line without redoing the whole track.
+        </p>
       </CardContent>
     </Card>
   );

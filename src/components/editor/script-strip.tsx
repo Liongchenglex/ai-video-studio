@@ -7,13 +7,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useEditor, beatColor } from "@/components/editor/editor-store";
 
 export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
   const { beats, selection, select, revoiceBeat } = useEditor();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // Expanded shows the whole script full-height for comfortable reading and
+  // editing; collapsed is the compact band that keeps the timeline in view.
+  const [expanded, setExpanded] = useState(false);
   // The strip is a fixed-height band (the full script would push the
   // timeline below the fold), so keep the selected beat's sentence in view
   // by scrolling the band — never the page — when selection changes.
@@ -21,7 +24,8 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
   const selectedBeatId = selection?.type === "beat" ? selection.beatId : null;
   useEffect(() => {
     const container = scrollRef.current;
-    if (!container || !selectedBeatId) return;
+    // Expanded mode has no inner scroll — nothing to keep in view.
+    if (expanded || !container || !selectedBeatId) return;
     const el = container.querySelector<HTMLElement>(`[data-beat-id="${selectedBeatId}"]`);
     if (!el) return;
     const er = el.getBoundingClientRect();
@@ -29,7 +33,7 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
     if (er.top < cr.top || er.bottom > cr.bottom) {
       container.scrollTop += er.top - cr.top - cr.height / 2 + er.height / 2;
     }
-  }, [selectedBeatId]);
+  }, [selectedBeatId, expanded]);
   // Guards against double-commit: pressing Enter (or Escape) calls commit()
   // or setEditingId(null) directly, which unmounts the textarea and fires
   // its onBlur. Setting this flag beforehand tells onBlur to no-op instead
@@ -49,10 +53,20 @@ export function ScriptStrip({ onSeek }: { onSeek: (s: number) => void }) {
 
   return (
     <div className="rounded border bg-muted/20 p-3 text-sm leading-7">
-      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Script — edit in place, re-voices only the beat you touch
-      </p>
-      <div ref={scrollRef} className="max-h-[6.5rem] overflow-y-auto pr-1">
+      <div className="mb-1 flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Script — edit in place, re-voices only the beat you touch
+        </p>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? "Collapse to the compact band" : "Expand to read the full script"}
+          className="rounded p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+        </button>
+      </div>
+      <div ref={scrollRef} className={expanded ? "pr-1" : "max-h-[6.5rem] overflow-y-auto pr-1"}>
         <p>
         {beats.map((beat, i) =>
           editingId === beat.id ? (

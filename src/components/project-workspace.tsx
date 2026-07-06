@@ -267,6 +267,7 @@ export function ProjectWorkspace({
         <UnifiedEditor
           projectId={project.id}
           script={project.script}
+          hasBrief={brief.trim().length > 0}
           voiceId={voiceId}
           initialBeats={initialBeats}
           initialShots={initialShots}

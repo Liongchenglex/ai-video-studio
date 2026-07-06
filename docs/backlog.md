@@ -598,3 +598,16 @@ Final-review additions (2026-07-04):
 - Normalize description ?? "" at the store's entity-ingestion points (clearing a
   description round-trips null → controlled/uncontrolled Textarea warning).
 - Extract route: surface partial success when entities insert but tagging fails.
+
+### 21. Script generation leaks Claude's preamble into the script
+
+**Status:** Open — observed live 2026-07-06 on a fresh project ("Now I have
+comprehensive research on X. Let me write the script directly: ---" preceded
+the actual narration). Pre-existing F-03 behavior (src/lib/script-generation.ts),
+newly visible because the review stage shows the full script prominently.
+Fix direction: harden the generation prompt to output narration ONLY, and/or
+strip a leading non-narration preamble ending in a `---` separator server-side.
+The review stage is the mitigation meanwhile — users see and can delete it
+before voicing.
+
+**Tag:** bug, quality, F-03
