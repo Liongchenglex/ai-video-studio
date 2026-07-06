@@ -712,6 +712,23 @@ export function absoluteShotRange(
 }
 
 /**
+ * The entity whose reference sheet conditions this shot's image — MUST
+ * mirror the server's resolvePrimaryEntity rule (shot image route): among
+ * tagged entities with a finished sheet, in tag order, the first CHARACTER
+ * wins; otherwise the first with a sheet. Null → unconditioned generation.
+ */
+export function primaryEntityOfShot(
+  shot: EditorShot,
+  entities: EditorEntity[],
+): EditorEntity | null {
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  const ready = (shot.referencedEntityIds ?? [])
+    .map((id) => byId.get(id))
+    .filter((e): e is EditorEntity => !!e && e.referenceStatus === "done");
+  return ready.find((e) => e.type === "character") ?? ready[0] ?? null;
+}
+
+/**
  * Every beat a shot's time range overlaps, in order. Shots may span beat
  * boundaries (anchor-beat spillover), so narration display concatenates
  * these beats' text and labels read "beat N" or "beats N–M".

@@ -30,6 +30,8 @@ import {
   User,
   Mountain,
   Box,
+  Star,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,6 +42,7 @@ import {
   absoluteShotRange,
   beatsSpanned,
   entitiesOfShot,
+  primaryEntityOfShot,
   type EditorBeat,
   type EditorEntity,
   type EditorShot,
@@ -397,12 +400,25 @@ function ShotEditPanel({
   // whether any of them has a usable ("done") reference sheet yet.
   const taggedEntities = entitiesOfShot(shot, entities);
   const hasReadyReference = taggedEntities.some((e) => e.referenceStatus === "done");
+  const primaryEntity = primaryEntityOfShot(shot, entities);
   const toggleEntity = (entityId: string) => {
     const current = shot.referencedEntityIds;
     const updated = current.includes(entityId)
       ? current.filter((id) => id !== entityId)
       : [...current, entityId];
     tagShot(shot.id, updated);
+  };
+
+  // Click a tagged chip → the entity's name lands in the image prompt, so
+  // the tag and the prompt text describe the same subject. Persisted
+  // immediately (the blur-persist flow only fires if the textarea is
+  // focused later). No-op when the prompt already names the entity.
+  const insertEntityIntoPrompt = (name: string) => {
+    if (imagePrompt.toLowerCase().includes(name.toLowerCase())) return;
+    const trimmed = imagePrompt.trimEnd();
+    const next = trimmed.length > 0 ? `${trimmed}, ${name}` : name;
+    setImagePrompt(next);
+    updateShot(shot.id, { imagePrompt: next });
   };
 
   return (
@@ -476,28 +492,63 @@ function ShotEditPanel({
             {entities.map((entity) => {
               const Icon = ENTITY_TYPE_ICON[entity.type];
               const selected = shot.referencedEntityIds.includes(entity.id);
+              const isPrimary = primaryEntity?.id === entity.id;
+              if (!selected) {
+                // Untagged: clicking tags the entity onto the shot.
+                return (
+                  <button
+                    key={entity.id}
+                    type="button"
+                    onClick={() => toggleEntity(entity.id)}
+                    title={`Tag ${entity.name} in this shot`}
+                    className="flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground transition hover:bg-muted/80"
+                  >
+                    <Icon className="size-3" />
+                    {entity.name}
+                  </button>
+                );
+              }
+              // Tagged: the body inserts the name into the image prompt;
+              // ✕ untags; ★ marks the primary whose sheet conditions the image.
               return (
-                <button
+                <span
                   key={entity.id}
-                  type="button"
-                  onClick={() => toggleEntity(entity.id)}
-                  className={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] transition ${
-                    selected
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  className={`flex items-center gap-1 rounded-full bg-primary px-2 py-1 text-[10px] text-primary-foreground ${
+                    isPrimary ? "ring-2 ring-amber-400" : ""
                   }`}
                 >
-                  <Icon className="size-3" />
-                  {entity.name}
-                </button>
+                  {isPrimary && (
+                    <Star
+                      className="size-3 fill-amber-300 text-amber-300"
+                      aria-label="Primary — its reference sheet conditions this image"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => insertEntityIntoPrompt(entity.name)}
+                    title={`Insert "${entity.name}" into the image prompt`}
+                    className="flex items-center gap-1 transition hover:opacity-80"
+                  >
+                    <Icon className="size-3" />
+                    {entity.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleEntity(entity.id)}
+                    title={`Untag ${entity.name}`}
+                    className="rounded-full transition hover:bg-primary-foreground/20"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </span>
               );
             })}
           </div>
-          {taggedEntities.length > 0 && !hasReadyReference && (
-            <p className="text-[10px] text-muted-foreground">
-              no reference sheet yet — Generate one in the rail to condition this shot
-            </p>
-          )}
+          <p className="text-[10px] leading-4 text-muted-foreground">
+            {taggedEntities.length > 0 && !hasReadyReference
+              ? "no reference sheet yet — Generate one in the rail to condition this shot"
+              : "★ primary (its sheet conditions the image) · click a tagged name to insert it into the prompt · ✕ untags"}
+          </p>
         </div>
       )}
 
