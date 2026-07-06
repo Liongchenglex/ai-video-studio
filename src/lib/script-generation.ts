@@ -38,6 +38,7 @@ function buildSystemPrompt(input: GenerateScriptInput): string {
 2. THEN: Write the complete script as your final response. Do NOT use a tool to save it — just write the prose directly.
 
 ## Output Format
+- Your ENTIRE response must be the narration itself, starting with its first spoken word. Never open with meta commentary ("Now I have my research…", "Here is the script:", "Let me write…"), never insert a separator line (---), and never describe what you are about to do — none of that is speakable and it corrupts the voiceover.
 - Plain prose only. No headings, no bullet points, no markdown, no labels ("Scene 1:", "Hook:", etc).
 - Paragraph breaks (blank line between paragraphs) divide the script into natural narrative beats. Aim for 3-8 paragraphs for a ${input.targetDurationMinutes}-minute video.
 - Write as the voiceover will be spoken. Do not include stage directions, visual descriptions, or camera language — a separate system handles visuals.
@@ -56,9 +57,45 @@ function buildSystemPrompt(input: GenerateScriptInput): string {
 Write the script now as your response. Nothing else — just the script prose.`;
 }
 
+// Meta lead-ins the model sometimes emits after web-search rounds despite
+// the prompt ("Now I have comprehensive research… Let me write the script
+// directly:"). Matched only against the FIRST paragraph, conservatively.
+const META_OPENERS =
+  /^(now (that )?i('ve| have)|let me (write|draft)|here('s| is) (the|your|a)|i('ll| will) (now )?(write|draft)|based on (my|the) research|i('ve| have) (gathered|researched|completed))/i;
+
+/**
+ * Strips non-narration lead-ins from a generated script: a fully
+ * code-fenced wrapper, leading separator lines (---), and up to a few
+ * opening paragraphs that read as meta commentary rather than narration.
+ * Deterministic and deliberately conservative — a paragraph is only
+ * dropped when it clearly matches a meta pattern, so real narration
+ * (including short dramatic hooks) is never removed.
+ */
+export function sanitizeScript(raw: string): string {
+  let text = raw.trim();
+
+  const fenced = text.match(/^```(?:\w+)?\n([\s\S]*)\n```$/);
+  if (fenced) text = fenced[1].trim();
+
+  for (let i = 0; i < 3; i++) {
+    const paragraphs = text.split(/\n\s*\n/);
+    if (paragraphs.length < 2) break;
+    const first = paragraphs[0].trim();
+    const isSeparator = /^[-*_]{3,}$/.test(first);
+    const isMeta =
+      first.length < 300 &&
+      (META_OPENERS.test(first) ||
+        (/:$/.test(first) && /\b(script|research|narration|draft)\b/i.test(first)));
+    if (!isSeparator && !isMeta) break;
+    text = paragraphs.slice(1).join("\n\n").trim();
+  }
+
+  return text;
+}
+
 /**
  * Generates a script as plain text with paragraph breaks. Returns the
- * raw script string; callers persist it to projects.script.
+ * sanitized script string; callers persist it to projects.script.
  */
 export async function generateScript(input: GenerateScriptInput): Promise<string> {
   const systemPrompt = buildSystemPrompt(input);
@@ -101,8 +138,17 @@ export async function generateScript(input: GenerateScriptInput): Promise<string
       if (!scriptText) {
         throw new Error("Claude finished without producing script text");
       }
-      console.log(`[script-gen] script: ${scriptText.length} chars, ~${scriptText.split(/\s+/).length} words`);
-      return scriptText;
+      const cleaned = sanitizeScript(scriptText);
+      if (!cleaned) {
+        throw new Error("Script was empty after stripping non-narration lead-in");
+      }
+      if (cleaned.length !== scriptText.length) {
+        console.log(
+          `[script-gen] sanitizer stripped ${scriptText.length - cleaned.length} chars of lead-in`,
+        );
+      }
+      console.log(`[script-gen] script: ${cleaned.length} chars, ~${cleaned.split(/\s+/).length} words`);
+      return cleaned;
     }
 
     // stop_reason is "tool_use" — web search ran server-side. Append the

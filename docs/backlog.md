@@ -601,7 +601,12 @@ Final-review additions (2026-07-04):
 
 ### 21. Script generation leaks Claude's preamble into the script
 
-**Status:** Open — observed live 2026-07-06 on a fresh project ("Now I have
+**Status:** FIXED 2026-07-06 — generation prompt hardened (narration-only,
+no separators) plus a deterministic `sanitizeScript()` post-pass in
+src/lib/script-generation.ts that strips code fences, separator lines, and
+meta lead-in paragraphs (conservative pattern match; verified it preserves
+legitimate colon-ending narration). Original report: observed live
+2026-07-06 on a fresh project ("Now I have
 comprehensive research on X. Let me write the script directly: ---" preceded
 the actual narration). Pre-existing F-03 behavior (src/lib/script-generation.ts),
 newly visible because the review stage shows the full script prominently.

@@ -87,15 +87,22 @@ export function UnifiedEditor({
   const [beats, setBeats] = useState<EditorBeat[]>(initialBeats);
   const [generatingScript, setGeneratingScript] = useState(false);
   const [scriptError, setScriptError] = useState(false);
+  // "I have my own script" — skips (and aborts) generation and opens the
+  // review stage with an empty draft to paste into.
+  const [pasteMode, setPasteMode] = useState(false);
+  const genAbortRef = useRef<AbortController | null>(null);
 
   const hasScript = script.trim().length > 0;
 
   const generateScript = useCallback(async () => {
     setScriptError(false);
     setGeneratingScript(true);
+    const controller = new AbortController();
+    genAbortRef.current = controller;
     try {
       const res = await fetch(`/api/projects/${projectId}/script/generate`, {
         method: "POST",
+        signal: controller.signal,
       });
       if (res.ok) {
         const data = (await res.json()) as { script: string };
@@ -103,12 +110,21 @@ export function UnifiedEditor({
       } else {
         setScriptError(true);
       }
-    } catch {
-      setScriptError(true);
+    } catch (err) {
+      // An abort means the user chose to paste their own script — not an error.
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        setScriptError(true);
+      }
     } finally {
       setGeneratingScript(false);
     }
   }, [projectId]);
+
+  const useOwnScript = useCallback(() => {
+    genAbortRef.current?.abort(); // the route discards an aborted generation
+    setScriptError(false);
+    setPasteMode(true);
+  }, []);
 
   // ── Stage 1: no script → generation starts automatically ──
   // The user arrived here deliberately (brief + style done), so the AI gets
@@ -116,19 +132,20 @@ export function UnifiedEditor({
   // Fires once per mount; failures surface a manual retry.
   const autoGenStarted = useRef(false);
   useEffect(() => {
-    if (!hasScript && hasBrief && !autoGenStarted.current) {
+    if (!hasScript && hasBrief && !pasteMode && !autoGenStarted.current) {
       autoGenStarted.current = true;
       generateScript();
     }
-  }, [hasScript, hasBrief, generateScript]);
+  }, [hasScript, hasBrief, pasteMode, generateScript]);
 
-  if (!hasScript) {
+  if (!hasScript && !pasteMode) {
     return (
       <GenerateScriptStage
         hasBrief={hasBrief}
         generating={generatingScript}
         error={scriptError}
         onRetry={generateScript}
+        onUseOwnScript={useOwnScript}
       />
     );
   }
@@ -171,21 +188,34 @@ function GenerateScriptStage({
   generating,
   error,
   onRetry,
+  onUseOwnScript,
 }: {
   hasBrief: boolean;
   generating: boolean;
   error: boolean;
   onRetry: () => void;
+  onUseOwnScript: () => void;
 }) {
+  const pasteInstead = (
+    <button
+      type="button"
+      onClick={onUseOwnScript}
+      className="text-xs text-muted-foreground underline underline-offset-2 transition hover:text-foreground"
+    >
+      …or paste your own script instead
+    </button>
+  );
+
   if (!hasBrief) {
     return (
       <Card>
-        <CardContent className="space-y-2 p-6 text-center">
+        <CardContent className="space-y-3 p-6 text-center">
           <h2 className="text-lg font-semibold">Write your concept first</h2>
           <p className="mx-auto max-w-md text-sm text-muted-foreground">
             The script is written from your brief — go back to the Concept step and describe the
             video, then return here.
           </p>
+          {pasteInstead}
         </CardContent>
       </Card>
     );
@@ -215,6 +245,7 @@ function GenerateScriptStage({
             </p>
           </>
         )}
+        {pasteInstead}
       </CardContent>
     </Card>
   );
@@ -254,8 +285,10 @@ function ScriptReviewStage({
 
   // Autosave on blur so a user who leaves mid-review keeps their edits —
   // this stage is re-entered on every visit until the script is voiced.
-  const persistDraft = async () => {
-    if (draft === script) return;
+  // `force` is used right before voicing: the draft is ALWAYS written then,
+  // so whatever is on screen is exactly what gets voiced.
+  const persistDraft = async (force = false) => {
+    if (!force && draft === script) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/projects/${projectId}`, {
@@ -276,7 +309,7 @@ function ScriptReviewStage({
     setError(false);
     setVoicing(true);
     try {
-      await persistDraft(); // never voice an unsaved edit
+      await persistDraft(true); // what's on screen is exactly what gets voiced
       const gen = await fetch(`/api/projects/${projectId}/beats/generate`, { method: "POST" });
       if (!gen.ok) {
         setError(true);
@@ -308,10 +341,15 @@ function ScriptReviewStage({
       <CardContent className="space-y-4 p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold">✨ Your script is ready — review it</h2>
+            <h2 className="text-lg font-semibold">
+              {script.trim().length === 0
+                ? "Paste your script"
+                : "✨ Your script is ready — review it"}
+            </h2>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Read and edit the full script now: changes here are free, while edits after voicing
-              re-voice one line at a time. When it reads right, voice it below.
+              {script.trim().length === 0
+                ? "Drop your own script in below — plain prose with paragraph breaks works best. You can still have the AI write one instead with Regenerate."
+                : "Read and edit the full script now — or replace it entirely by pasting your own. Changes here are free, while edits after voicing re-voice one line at a time. When it reads right, voice it below."}
             </p>
           </div>
           <Button
@@ -334,9 +372,10 @@ function ScriptReviewStage({
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onBlur={persistDraft}
+            onBlur={() => persistDraft()}
             disabled={voicing || regenerating}
             maxLength={50000}
+            placeholder="Paste or write your script here — plain prose, blank line between paragraphs…"
             className="min-h-[50vh] w-full resize-y rounded border bg-background p-4 text-sm leading-7 focus:outline-none focus:ring-1 focus:ring-ring"
           />
           <div className="flex justify-between text-[11px] text-muted-foreground">
@@ -350,7 +389,11 @@ function ScriptReviewStage({
         <VoiceSelector selectedVoiceId={voiceId} onSelect={onVoiceChange} disabled={voicing} />
 
         <div className="flex items-center gap-3">
-          <Button onClick={handleVoice} disabled={voicing || regenerating}>
+          <Button
+            onClick={handleVoice}
+            disabled={voicing || regenerating || words === 0}
+            title={words === 0 ? "Write or paste a script first" : undefined}
+          >
             {voicing ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

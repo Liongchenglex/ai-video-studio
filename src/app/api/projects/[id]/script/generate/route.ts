@@ -55,6 +55,14 @@ export async function POST(request: NextRequest, { params }: Params) {
       styleString: project.styleString,
     });
 
+    // The client can opt out mid-generation ("I have my own script") by
+    // aborting the request — in that case the result must NOT be persisted,
+    // or it would clobber the script the user is pasting right now.
+    if (request.signal.aborted) {
+      console.log("[script/generate] client aborted — discarding generated script");
+      return new Response(null, { status: 499 });
+    }
+
     await db
       .update(projects)
       .set({ script })
