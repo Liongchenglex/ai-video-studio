@@ -59,7 +59,8 @@ Per-unit prices live in a new `src/lib/generation-costs.ts` constants module
 labels them as such.
 
 ### `POST /api/projects/[id]/generate-all`
-Body `{ includeClips: boolean }` (zod-validated). Auth + ownership + CSRF +
+Body `{ includeClips: boolean }` (manual parse + validation — this repo has
+no zod; matches every existing route's body handling). Auth + ownership + CSRF +
 rate-limit, matching every existing mutation. Recomputes targeting server-side
 (never trusts client counts). **No-op with 409 if a batch is already running**
 (any targeted row currently `generating`). Sends one Inngest event
