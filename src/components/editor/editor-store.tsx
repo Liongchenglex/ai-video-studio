@@ -196,7 +196,7 @@ interface EditorContextValue {
     endInBeat: number,
     imagePrompt: string,
     motionPrompt?: string,
-  ): Promise<void>;
+  ): Promise<EditorShot | null>;
   updateShot(
     shotId: string,
     patch: Partial<
@@ -305,7 +305,7 @@ export function EditorProvider(props: {
       endInBeat: number,
       imagePrompt: string,
       motionPrompt?: string,
-    ) => {
+    ): Promise<EditorShot | null> => {
       try {
         const res = await fetch(`/api/projects/${projectId}/shots`, {
           method: "POST",
@@ -314,13 +314,18 @@ export function EditorProvider(props: {
         });
         if (!res.ok) {
           console.warn("[editor-store] create shot failed:", await res.text());
-          return;
+          return null;
         }
-        const shot = (await res.json()) as EditorShot;
+        const raw = (await res.json()) as EditorShot;
+        const shot: EditorShot = { ...raw, referencedEntityIds: raw.referencedEntityIds ?? [] };
         dispatch({ type: "addShot", shot });
         dispatch({ type: "select", selection: { type: "shot", shotId: shot.id } });
+        // Returned so callers (the gap-create form) can chain follow-ups
+        // like tagging the freshly created shot.
+        return shot;
       } catch (err) {
         console.error("[editor-store] create shot error:", err);
+        return null;
       }
     },
     [projectId],

@@ -747,7 +747,7 @@ function GapCreateForm({
 }: {
   selection: { type: "gap"; beatId: string; startInBeat: number; endInBeat: number };
 }) {
-  const { projectId, beats, createShot, select } = useEditor();
+  const { projectId, beats, entities, createShot, tagShot, select } = useEditor();
   const beat = beats.find((b) => b.id === selection.beatId) ?? null;
   // The gap may span beat boundaries (offsets are relative to its anchor
   // beat) — narration is every beat the absolute range overlaps.
@@ -765,19 +765,52 @@ function GapCreateForm({
   const [suggestingImage, setSuggestingImage] = useState(false);
   const [suggestingMotion, setSuggestingMotion] = useState(false);
   const [creating, setCreating] = useState(false);
+  // Entities picked before the shot exists — applied as tags on create.
+  const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
+
+  const toggleEntity = (entityId: string) =>
+    setSelectedEntityIds((cur) =>
+      cur.includes(entityId) ? cur.filter((id) => id !== entityId) : [...cur, entityId].slice(0, 8),
+    );
+
+  const insertEntityIntoPrompt = (name: string) => {
+    setImagePrompt((cur) => {
+      if (cur.toLowerCase().includes(name.toLowerCase())) return cur;
+      const trimmed = cur.trimEnd();
+      return trimmed.length > 0 ? `${trimmed}, ${name}` : name;
+    });
+  };
 
   const aiSuggestImage = async () => {
     if (!voText.trim()) return;
     setSuggestingImage(true);
     try {
+      // Same entity loop as the shot panel: picked entities anchor the
+      // suggestion, the rest are offered by exact name, and any the model
+      // names in the result get auto-picked.
+      const picked = entities.filter((e) => selectedEntityIds.includes(e.id));
+      const entityNames = picked.map((e) => e.name);
+      const availableEntityNames = entities
+        .filter((e) => !selectedEntityIds.includes(e.id))
+        .map((e) => e.name)
+        .slice(0, 16);
       const res = await fetch(`/api/projects/${projectId}/shots/suggest-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voText: voText.trim() }),
+        body: JSON.stringify({
+          voText: voText.trim(),
+          ...(entityNames.length > 0 ? { entityNames } : {}),
+          ...(availableEntityNames.length > 0 ? { availableEntityNames } : {}),
+        }),
       });
       if (res.ok) {
         const data = (await res.json()) as { imagePrompt: string };
         setImagePrompt(data.imagePrompt);
+        const lower = data.imagePrompt.toLowerCase();
+        const matched = entities
+          .filter((e) => lower.includes(e.name.toLowerCase()))
+          .map((e) => e.id);
+        setSelectedEntityIds((cur) => [...new Set([...cur, ...matched])].slice(0, 8));
       }
     } finally {
       setSuggestingImage(false);
@@ -806,13 +839,16 @@ function GapCreateForm({
     if (!imagePrompt.trim()) return;
     setCreating(true);
     try {
-      await createShot(
+      const created = await createShot(
         selection.beatId,
         selection.startInBeat,
         selection.endInBeat,
         imagePrompt.trim(),
         motionPrompt.trim() || undefined,
       );
+      if (created && selectedEntityIds.length > 0) {
+        await tagShot(created.id, selectedEntityIds);
+      }
     } finally {
       setCreating(false);
     }
@@ -832,6 +868,69 @@ function GapCreateForm({
             VO here
           </p>
           <p className="text-xs font-mono">{voText}</p>
+        </div>
+      )}
+
+      {entities.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            In this shot
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {entities.map((entity) => {
+              const Icon = ENTITY_TYPE_ICON[entity.type];
+              const selected = selectedEntityIds.includes(entity.id);
+              const hasSheet = entity.referenceStatus === "done";
+              if (!selected) {
+                return (
+                  <button
+                    key={entity.id}
+                    type="button"
+                    onClick={() => toggleEntity(entity.id)}
+                    title={`Tag ${entity.name} on the new shot`}
+                    className="flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground transition hover:bg-muted/80"
+                  >
+                    <Icon className="size-3" />
+                    {entity.name}
+                  </button>
+                );
+              }
+              return (
+                <span
+                  key={entity.id}
+                  className={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] text-primary-foreground ${
+                    hasSheet ? "bg-primary" : "bg-primary/60 ring-1 ring-dashed ring-primary"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleEntity(entity.id)}
+                    title={
+                      hasSheet
+                        ? `Untag ${entity.name}`
+                        : `Untag ${entity.name} — no reference sheet yet (Generate one in the rail)`
+                    }
+                    className="flex items-center gap-1 transition hover:opacity-80"
+                  >
+                    <Icon className="size-3" />
+                    {entity.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => insertEntityIntoPrompt(entity.name)}
+                    title={`Insert "${entity.name}" into the image prompt`}
+                    className="rounded-full p-0.5 transition hover:bg-primary-foreground/20"
+                  >
+                    <TextCursorInput className="size-3" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+          <p className="text-[10px] leading-4 text-muted-foreground">
+            Applied as tags when the shot is created · AI suggest picks matching entities
+            automatically
+          </p>
         </div>
       )}
 
