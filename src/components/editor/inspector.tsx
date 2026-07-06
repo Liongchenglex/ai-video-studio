@@ -31,7 +31,7 @@ import {
   Mountain,
   Box,
   Star,
-  X,
+  TextCursorInput,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -508,8 +508,9 @@ function ShotEditPanel({
                   </button>
                 );
               }
-              // Tagged: the body inserts the name into the image prompt;
-              // ✕ untags; ★ marks the primary whose sheet conditions the image.
+              // Tagged: the body toggles (untags) like any chip; the small
+              // text-insert icon drops the name into the image prompt;
+              // ★ marks the primary whose sheet conditions the image.
               return (
                 <span
                   key={entity.id}
@@ -525,8 +526,8 @@ function ShotEditPanel({
                   )}
                   <button
                     type="button"
-                    onClick={() => insertEntityIntoPrompt(entity.name)}
-                    title={`Insert "${entity.name}" into the image prompt`}
+                    onClick={() => toggleEntity(entity.id)}
+                    title={`Untag ${entity.name}`}
                     className="flex items-center gap-1 transition hover:opacity-80"
                   >
                     <Icon className="size-3" />
@@ -534,11 +535,11 @@ function ShotEditPanel({
                   </button>
                   <button
                     type="button"
-                    onClick={() => toggleEntity(entity.id)}
-                    title={`Untag ${entity.name}`}
-                    className="rounded-full transition hover:bg-primary-foreground/20"
+                    onClick={() => insertEntityIntoPrompt(entity.name)}
+                    title={`Insert "${entity.name}" into the image prompt`}
+                    className="rounded-full p-0.5 transition hover:bg-primary-foreground/20"
                   >
-                    <X className="size-3" />
+                    <TextCursorInput className="size-3" />
                   </button>
                 </span>
               );
@@ -547,7 +548,7 @@ function ShotEditPanel({
           <p className="text-[10px] leading-4 text-muted-foreground">
             {taggedEntities.length > 0 && !hasReadyReference
               ? "no reference sheet yet — Generate one in the rail to condition this shot"
-              : "★ primary (its sheet conditions the image) · click a tagged name to insert it into the prompt · ✕ untags"}
+              : "★ primary (its sheet conditions the image) · click a chip to tag/untag · the small icon inserts the name into the prompt"}
           </p>
         </div>
       )}

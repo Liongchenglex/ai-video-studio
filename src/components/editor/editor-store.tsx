@@ -235,6 +235,10 @@ interface EditorContextValue {
 
 const EditorContext = createContext<EditorContextValue | null>(null);
 
+// Monotonic per-shot update sequence — see updateShot. Module scope is fine:
+// one editor mounts at a time and shot ids are globally unique.
+const shotUpdateSeq = new Map<string, number>();
+
 export function EditorProvider(props: {
   projectId: string;
   initialBeats: EditorBeat[];
@@ -339,6 +343,19 @@ export function EditorProvider(props: {
     ) => {
       const prevShot = state.shots.find((s) => s.id === shotId);
       dispatch({ type: "patchShot", shotId, patch });
+      // Rapid updates to the same shot overlap on the network (a PATCH can
+      // take seconds): an EARLIER request's response must never stomp a
+      // LATER request's optimistic state — only the latest request for a
+      // shot gets to merge its response or revert, and it only touches the
+      // keys it actually changed.
+      const seq = (shotUpdateSeq.get(shotId) ?? 0) + 1;
+      shotUpdateSeq.set(shotId, seq);
+      const isLatest = () => shotUpdateSeq.get(shotId) === seq;
+      const keys = Object.keys(patch) as (keyof EditorShot)[];
+      const pick = (source: Partial<EditorShot>): Partial<EditorShot> =>
+        Object.fromEntries(
+          keys.filter((k) => k in source).map((k) => [k, source[k]]),
+        ) as Partial<EditorShot>;
       try {
         const res = await fetch(`/api/projects/${projectId}/shots/${shotId}`, {
           method: "PATCH",
@@ -347,16 +364,22 @@ export function EditorProvider(props: {
         });
         if (!res.ok) {
           console.warn("[editor-store] update shot failed:", await res.text());
-          if (prevShot) dispatch({ type: "patchShot", shotId, patch: prevShot });
+          if (prevShot && isLatest()) {
+            dispatch({ type: "patchShot", shotId, patch: pick(prevShot) });
+          }
           return;
         }
         const updated = (await res.json()) as Partial<EditorShot>;
-        // Spread-merge so client-only fields (imageUrl, clipUrl) survive —
-        // the PATCH response only contains raw DB fields.
-        dispatch({ type: "patchShot", shotId, patch: updated });
+        // Merge only the keys this request changed (server-authoritative for
+        // them) so client-only fields and newer optimistic patches survive.
+        if (isLatest()) {
+          dispatch({ type: "patchShot", shotId, patch: pick(updated) });
+        }
       } catch (err) {
         console.error("[editor-store] update shot error:", err);
-        if (prevShot) dispatch({ type: "patchShot", shotId, patch: prevShot });
+        if (prevShot && isLatest()) {
+          dispatch({ type: "patchShot", shotId, patch: pick(prevShot) });
+        }
       }
     },
     [projectId, state.shots],
