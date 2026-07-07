@@ -765,8 +765,16 @@ export function EditorProvider(props: {
   useEffect(() => {
     if (!batchActive) return;
     let cancelled = false;
+    // A tick that fires while a poll is still in flight is skipped: slow
+    // responses (dev compiles, cold routes) would otherwise overlap and
+    // resolve out of order, letting an older snapshot (statuses pending,
+    // urls null) overwrite the newer merged state. No overlap → no
+    // reordering, so no sequence counter is needed.
+    let inFlight = false;
 
     const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const [shotsRes, entitiesRes] = await Promise.all([
           fetch(`/api/projects/${projectId}/shots`),
@@ -817,6 +825,8 @@ export function EditorProvider(props: {
         }
       } catch (err) {
         console.error("[editor-store] batch poll error:", err);
+      } finally {
+        inFlight = false;
       }
     };
 
