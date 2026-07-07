@@ -695,10 +695,19 @@ export function EditorProvider(props: {
   );
 
   // ── Batch "Generate all" (v4 P3) ──
-  // dispatchedAtRef opens a grace window between POST and the orchestrator's
+  // graceActive opens a grace window between POST and the orchestrator's
   // first status flip, so batchActive doesn't flicker false before wave 1.
-  const dispatchedAtRef = useRef<number | null>(null);
-  const [dispatchTick, setDispatchTick] = useState(0);
+  // It closes on the first observed running row OR after 60s via a real
+  // timeout — whichever comes first — so batchActive can never stick true
+  // if the dispatched work dies before ever flipping a status.
+  const [graceActive, setGraceActive] = useState(false);
+  const graceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (graceTimeoutRef.current) clearTimeout(graceTimeoutRef.current);
+    },
+    [],
+  );
 
   const fetchGenerateAllPreview =
     useCallback(async (): Promise<GenerateAllPreview | null> => {
@@ -726,8 +735,9 @@ export function EditorProvider(props: {
         }
         const data = (await res.json()) as { dispatched: boolean };
         if (data.dispatched) {
-          dispatchedAtRef.current = Date.now();
-          setDispatchTick((t) => t + 1); // re-derive batchActive immediately
+          if (graceTimeoutRef.current) clearTimeout(graceTimeoutRef.current);
+          setGraceActive(true);
+          graceTimeoutRef.current = setTimeout(() => setGraceActive(false), 60_000);
         }
         return data.dispatched;
       } catch (err) {
@@ -746,14 +756,8 @@ export function EditorProvider(props: {
       ),
     [state.entities, state.shots],
   );
-  // 60s grace after dispatch covers the Inngest pickup delay; dispatchTick
-  // makes the memo re-evaluate right after a dispatch.
-  const batchActive = useMemo(() => {
-    void dispatchTick;
-    const inGrace =
-      dispatchedAtRef.current !== null && Date.now() - dispatchedAtRef.current < 60_000;
-    return anyRowGenerating || inGrace;
-  }, [anyRowGenerating, dispatchTick]);
+  // 60s grace after dispatch covers the Inngest pickup delay.
+  const batchActive = anyRowGenerating || graceActive;
 
   // Poll while a batch is live (covers on-load detection too: rows already
   // `generating` at mount start the loop). Merges ONLY generation fields so
@@ -807,7 +811,10 @@ export function EditorProvider(props: {
           freshShots.some(
             (s) => s.imageStatus === "generating" || s.clipStatus === "generating",
           );
-        if (running) dispatchedAtRef.current = null;
+        if (running) {
+          if (graceTimeoutRef.current) clearTimeout(graceTimeoutRef.current);
+          setGraceActive(false);
+        }
       } catch (err) {
         console.error("[editor-store] batch poll error:", err);
       }
