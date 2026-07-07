@@ -49,6 +49,7 @@ import { StoryboardView } from "@/components/editor/storyboard-view";
 import { ScriptStrip } from "@/components/editor/script-strip";
 import { Inspector } from "@/components/editor/inspector";
 import { ReferenceBiblePanel } from "@/components/editor/reference-bible-panel";
+import { GenerateAllDialog } from "@/components/editor/generate-all-dialog";
 
 interface UnifiedEditorProps {
   projectId: string;
@@ -425,8 +426,35 @@ function EditorShell({
   voiceId: string;
   onVoiceChange: (voiceId: string) => void;
 }) {
-  const { beats, shots, view, setView, totalDuration, recommendShots, recommending } = useEditor();
+  const {
+    beats,
+    shots,
+    entities,
+    view,
+    setView,
+    totalDuration,
+    recommendShots,
+    recommending,
+    batchActive,
+  } = useEditor();
   const { playing, playheadSeconds, play, pause, seek } = useBeatPlayback(beats);
+  const [generateAllOpen, setGenerateAllOpen] = useState(false);
+
+  // Rows still in flight for the running batch: generating reference sheets,
+  // plus shots whose image is generating|pending (pending ones will still be
+  // reached by the batch) or whose clip is generating. Pending clips are
+  // excluded — clips may not have been opted into this run.
+  const batchRemaining = useMemo(
+    () =>
+      entities.filter((e) => e.referenceStatus === "generating").length +
+      shots.filter(
+        (s) =>
+          s.imageStatus === "generating" ||
+          s.imageStatus === "pending" ||
+          s.clipStatus === "generating",
+      ).length,
+    [entities, shots],
+  );
 
   // A stable onSeek identity: TimelineView's drag effect re-subscribes on
   // identity change, and `seek` changes on every play/pause toggle.
@@ -507,7 +535,11 @@ function EditorShell({
         onStop={pause}
         recommending={recommending}
         onRecommend={recommendShots}
+        batchActive={batchActive}
+        batchRemaining={batchRemaining}
+        onGenerateAll={() => setGenerateAllOpen(true)}
       />
+      <GenerateAllDialog open={generateAllOpen} onOpenChange={setGenerateAllOpen} />
 
       <div className="flex gap-4">
         <ReferenceBiblePanel />
@@ -592,6 +624,9 @@ function TopBar({
   onStop,
   recommending,
   onRecommend,
+  batchActive,
+  batchRemaining,
+  onGenerateAll,
 }: {
   beatCount: number;
   shotCount: number;
@@ -604,6 +639,9 @@ function TopBar({
   onStop: () => void;
   recommending: boolean;
   onRecommend: () => void;
+  batchActive: boolean;
+  batchRemaining: number;
+  onGenerateAll: () => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3 rounded border bg-muted/20 p-2">
@@ -651,6 +689,18 @@ function TopBar({
       <div className="ml-auto flex items-center gap-2">
         {/* The voice picker lives in the beat inspector panel — voice
             changes take effect beat by beat via Re-voice. */}
+        <Button size="sm" onClick={onGenerateAll} disabled={batchActive}>
+          {batchActive ? (
+            <>
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              Generating… {batchRemaining} left
+            </>
+          ) : (
+            <>
+              <Sparkles className="mr-1 h-3.5 w-3.5" /> Generate all
+            </>
+          )}
+        </Button>
         <Button
           size="sm"
           variant={shotCount === 0 ? "default" : "outline"}
