@@ -66,6 +66,12 @@ export const generateBatchFn = inngest.createFunction(
                 .where(and(eq(entities.id, entityId), eq(projects.id, projectId)))
                 .limit(1);
               if (!row) return { ok: false };
+              // Targets were frozen at compute-targets; if the user manually
+              // retried this item after that and it's already done, or its
+              // retry is in flight right now, skip instead of re-billing it.
+              if (row.entity.referenceStatus === "done" || row.entity.referenceStatus === "generating") {
+                return { ok: true, skipped: true };
+              }
               await generateEntitySheet(row.project, row.entity);
               return { ok: true };
             } catch (err) {
@@ -92,6 +98,9 @@ export const generateBatchFn = inngest.createFunction(
                 .where(and(eq(shots.id, shotId), eq(projects.id, projectId)))
                 .limit(1);
               if (!row) return { ok: false };
+              if (row.shot.imageStatus === "done" || row.shot.imageStatus === "generating") {
+                return { ok: true, skipped: true };
+              }
               await generateShotImage(row.project, row.shot);
               return { ok: true };
             } catch (err) {
@@ -132,6 +141,9 @@ export const generateBatchFn = inngest.createFunction(
                   .where(and(eq(shots.id, shotId), eq(projects.id, projectId)))
                   .limit(1);
                 if (!row) return { ok: false };
+                if (row.shot.clipStatus === "done" || row.shot.clipStatus === "generating") {
+                  return { ok: true, skipped: true };
+                }
                 await generateShotClip(row.project, row.shot);
                 return { ok: true };
               } catch (err) {

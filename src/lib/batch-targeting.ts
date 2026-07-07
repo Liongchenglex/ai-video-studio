@@ -4,10 +4,14 @@
  * orchestrator, so the three can never disagree about what a batch covers.
  * Missing = status pending|failed. done is never re-billed; generating is
  * skipped (in-flight).
+ *
+ * Also self-heals stale `generating` rows before reading them (see
+ * STALE_GENERATING_MINUTES below) — this is why the function does a write
+ * even though it's also called from the preview GET endpoint.
  */
 import { db } from "@/lib/db";
 import { entities, shots } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, lt } from "drizzle-orm";
 
 export interface BatchTargets {
   sheetEntityIds: string[];
@@ -16,7 +20,55 @@ export interface BatchTargets {
   anyGenerating: boolean;
 }
 
+// If an Inngest run dies without its per-item catch executing (e.g. the
+// process is killed mid-step), the row it was working on stays `generating`
+// forever: POST /generate-all then 409s forever, the Generate-all button
+// stays disabled, and the per-item retry button is disabled too (it's also
+// gated on not-generating) — only a manual psql UPDATE recovers. Heal here,
+// before targets are read, because preview, dispatch, and the orchestrator
+// all funnel through this one function, so all three self-heal identically.
+// 15 minutes is safely stale: the longest legitimate item (an LTX clip) is
+// ~2 minutes, and every legitimate status flip refreshes `updatedAt` via the
+// columns' `$onUpdate`.
+const STALE_GENERATING_MINUTES = 15;
+
+async function healStaleGenerating(projectId: string): Promise<void> {
+  const cutoff = new Date(Date.now() - STALE_GENERATING_MINUTES * 60 * 1000);
+  await db
+    .update(entities)
+    .set({ referenceStatus: "failed" })
+    .where(
+      and(
+        eq(entities.projectId, projectId),
+        eq(entities.referenceStatus, "generating"),
+        lt(entities.updatedAt, cutoff),
+      ),
+    );
+  await db
+    .update(shots)
+    .set({ imageStatus: "failed" })
+    .where(
+      and(
+        eq(shots.projectId, projectId),
+        eq(shots.imageStatus, "generating"),
+        lt(shots.updatedAt, cutoff),
+      ),
+    );
+  await db
+    .update(shots)
+    .set({ clipStatus: "failed" })
+    .where(
+      and(
+        eq(shots.projectId, projectId),
+        eq(shots.clipStatus, "generating"),
+        lt(shots.updatedAt, cutoff),
+      ),
+    );
+}
+
 export async function computeBatchTargets(projectId: string): Promise<BatchTargets> {
+  await healStaleGenerating(projectId);
+
   const entityRows = await db
     .select({ id: entities.id, referenceStatus: entities.referenceStatus })
     .from(entities)
