@@ -20,7 +20,9 @@ import {
   useContext,
   useReducer,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -67,6 +69,15 @@ export interface EditorEntity {
   referenceStatus: string;
   referenceSheetUrl: string | null;
   shotCount: number;
+}
+
+export interface GenerateAllPreview {
+  sheets: { count: number; estUsd: number };
+  images: { count: number; estUsd: number };
+  clips: { count: number; estUsd: number };
+  totalUsd: number;
+  totalWithClipsUsd: number;
+  batchRunning: boolean;
 }
 
 export type EditorView = "timeline" | "storyboard";
@@ -231,6 +242,9 @@ interface EditorContextValue {
   extractEntities(): Promise<{ created: number; taggedShots: number } | null>;
   extracting: boolean;
   tagShot(shotId: string, entityIds: string[]): Promise<void>;
+  fetchGenerateAllPreview(): Promise<GenerateAllPreview | null>;
+  generateAll(includeClips: boolean): Promise<boolean>;
+  batchActive: boolean;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -680,6 +694,150 @@ export function EditorProvider(props: {
     [updateShot],
   );
 
+  // ── Batch "Generate all" (v4 P3) ──
+  // graceActive opens a grace window between POST and the orchestrator's
+  // first status flip, so batchActive doesn't flicker false before wave 1.
+  // It closes on the first observed running row OR after 60s via a real
+  // timeout — whichever comes first — so batchActive can never stick true
+  // if the dispatched work dies before ever flipping a status.
+  const [graceActive, setGraceActive] = useState(false);
+  const graceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (graceTimeoutRef.current) clearTimeout(graceTimeoutRef.current);
+    },
+    [],
+  );
+
+  const fetchGenerateAllPreview =
+    useCallback(async (): Promise<GenerateAllPreview | null> => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/generate-all/preview`);
+        if (!res.ok) return null;
+        return (await res.json()) as GenerateAllPreview;
+      } catch (err) {
+        console.error("[editor-store] preview fetch error:", err);
+        return null;
+      }
+    }, [projectId]);
+
+  const generateAll = useCallback(
+    async (includeClips: boolean): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/generate-all`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ includeClips }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] generate-all dispatch failed:", await res.text());
+          return false;
+        }
+        const data = (await res.json()) as { dispatched: boolean };
+        if (data.dispatched) {
+          if (graceTimeoutRef.current) clearTimeout(graceTimeoutRef.current);
+          setGraceActive(true);
+          graceTimeoutRef.current = setTimeout(() => setGraceActive(false), 60_000);
+        }
+        return data.dispatched;
+      } catch (err) {
+        console.error("[editor-store] generate-all error:", err);
+        return false;
+      }
+    },
+    [projectId],
+  );
+
+  const anyRowGenerating = useMemo(
+    () =>
+      state.entities.some((e) => e.referenceStatus === "generating") ||
+      state.shots.some(
+        (s) => s.imageStatus === "generating" || s.clipStatus === "generating",
+      ),
+    [state.entities, state.shots],
+  );
+  // 60s grace after dispatch covers the Inngest pickup delay.
+  const batchActive = anyRowGenerating || graceActive;
+
+  // Poll while a batch is live (covers on-load detection too: rows already
+  // `generating` at mount start the loop). Merges ONLY generation fields so
+  // in-flight local edits (prompts, offsets, tags) are never clobbered.
+  useEffect(() => {
+    if (!batchActive) return;
+    let cancelled = false;
+    // A tick that fires while a poll is still in flight is skipped: slow
+    // responses (dev compiles, cold routes) would otherwise overlap and
+    // resolve out of order, letting an older snapshot (statuses pending,
+    // urls null) overwrite the newer merged state. No overlap → no
+    // reordering, so no sequence counter is needed.
+    let inFlight = false;
+
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const [shotsRes, entitiesRes] = await Promise.all([
+          fetch(`/api/projects/${projectId}/shots`),
+          fetch(`/api/projects/${projectId}/entities`),
+        ]);
+        if (cancelled || !shotsRes.ok || !entitiesRes.ok) return;
+        const { shots: freshShots } = (await shotsRes.json()) as { shots: EditorShot[] };
+        const { entities: freshEntities } = (await entitiesRes.json()) as {
+          entities: EditorEntity[];
+        };
+        if (cancelled) return;
+
+        for (const f of freshShots) {
+          dispatch({
+            type: "patchShot",
+            shotId: f.id,
+            patch: {
+              imageStatus: f.imageStatus,
+              imagePath: f.imagePath,
+              imageUrl: f.imageUrl,
+              clipStatus: f.clipStatus,
+              clipPath: f.clipPath,
+              clipUrl: f.clipUrl,
+              clipDurationSeconds: f.clipDurationSeconds,
+            },
+          });
+        }
+        for (const f of freshEntities) {
+          dispatch({
+            type: "patchEntity",
+            entityId: f.id,
+            patch: {
+              referenceStatus: f.referenceStatus,
+              referenceSheetUrl: f.referenceSheetUrl,
+            },
+          });
+        }
+        // Once real work is visibly running, the grace window has served
+        // its purpose — let row statuses drive batchActive from here on.
+        const running =
+          freshEntities.some((e) => e.referenceStatus === "generating") ||
+          freshShots.some(
+            (s) => s.imageStatus === "generating" || s.clipStatus === "generating",
+          );
+        if (running) {
+          if (graceTimeoutRef.current) clearTimeout(graceTimeoutRef.current);
+          setGraceActive(false);
+        }
+      } catch (err) {
+        console.error("[editor-store] batch poll error:", err);
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [batchActive, projectId]);
+
   const value: EditorContextValue = {
     projectId,
     beats: state.beats,
@@ -706,6 +864,9 @@ export function EditorProvider(props: {
     extractEntities,
     extracting,
     tagShot,
+    fetchGenerateAllPreview,
+    generateAll,
+    batchActive,
   };
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;

@@ -20,8 +20,7 @@ import {
   applyRateLimit,
 } from "@/lib/api-utils";
 import { getDownloadUrl } from "@/lib/r2";
-import { generateImage } from "@/lib/image-generation";
-import { sheetPrompt } from "@/lib/reference-sheet";
+import { generateEntitySheet } from "@/lib/entity-sheet-generation";
 
 type Params = { params: Promise<{ id: string; entityId: string }> };
 
@@ -57,28 +56,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { project, entity } = await loadOwnedProjectAndEntity(id, entityId, session.user.id);
   if (!project || !entity) return notFoundResponse();
 
-  await db
-    .update(entities)
-    .set({ referenceStatus: "generating" })
-    .where(eq(entities.id, entityId));
-
   try {
-    const r2Key = `projects/${id}/entities/${entityId}/sheet.png`;
-    const result = await generateImage({
-      r2Key,
-      stillImagePrompt: sheetPrompt(entity),
-      styleString: project.styleString,
-    });
-
-    const [updated] = await db
-      .update(entities)
-      .set({
-        referenceSheetPath: result.r2Key,
-        referenceStatus: "done",
-      })
-      .where(eq(entities.id, entityId))
-      .returning();
-
+    const updated = await generateEntitySheet(project, entity);
     return NextResponse.json({
       ...updated,
       referenceSheetUrl: updated.referenceSheetPath
@@ -87,10 +66,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     });
   } catch (err) {
     console.error(`Reference sheet generation failed for entity ${entityId}:`, err);
-    await db
-      .update(entities)
-      .set({ referenceStatus: "failed" })
-      .where(eq(entities.id, entityId));
     return NextResponse.json(
       { error: "Reference sheet generation failed" },
       { status: 502 },

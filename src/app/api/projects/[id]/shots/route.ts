@@ -1,9 +1,12 @@
 /**
- * POST /api/projects/[id]/shots
- * Creates a shot anchored to a beat (anchor-beat spillover model). The shot
- * STARTS inside its anchor beat (0 ≤ startInBeat < anchor duration) but may
- * spill past the anchor's end into following beats. Overlap is forbidden
- * against every other shot on the timeline (absolute ranges).
+ * API routes for a project's shots.
+ * GET  /api/projects/[id]/shots — list all shots with presigned URLs and
+ *      status defaults, ordered by sortOrder; used for polling during batch runs.
+ * POST /api/projects/[id]/shots — creates a shot anchored to a beat
+ *      (anchor-beat spillover model). The shot STARTS inside its anchor beat
+ *      (0 ≤ startInBeat < anchor duration) but may spill past the anchor's end
+ *      into following beats. Overlap is forbidden against every other shot on
+ *      the timeline (absolute ranges).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -18,6 +21,7 @@ import {
   verifyCsrf,
   applyRateLimit,
 } from "@/lib/api-utils";
+import { getDownloadUrl } from "@/lib/r2";
 import { MIN_SHOT_SECONDS, shotAbsoluteRange } from "@/lib/shot-beat-mapping";
 import { computeBeatOffsets, totalDurationSeconds } from "@/lib/beat-timing";
 
@@ -25,6 +29,49 @@ type Params = { params: Promise<{ id: string }> };
 
 const DEFAULT_MOTION_PROMPT =
   "the subject holds its pose while the scene breathes — faint ambient motion, minimal camera drift";
+
+export async function GET(_request: NextRequest, { params }: Params) {
+  const session = await getSession();
+  if (!session) return unauthorizedResponse();
+
+  const { id } = await params;
+  if (!isValidUUID(id)) return badRequestResponse("Invalid project ID");
+
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, id), eq(projects.userId, session.user.id)))
+    .limit(1);
+  if (!project || project.deletedAt) return notFoundResponse();
+
+  const rows = await db
+    .select()
+    .from(shots)
+    .where(eq(shots.projectId, id))
+    .orderBy(asc(shots.sortOrder));
+
+  const list = await Promise.all(
+    rows.map(async (shot) => ({
+      id: shot.id,
+      beatId: shot.beatId,
+      sortOrder: shot.sortOrder,
+      startInBeat: shot.startInBeat,
+      endInBeat: shot.endInBeat,
+      imagePrompt: shot.imagePrompt,
+      motionPrompt: shot.motionPrompt,
+      imagePath: shot.imagePath,
+      imageStatus: shot.imageStatus ?? "pending",
+      imageUrl: shot.imagePath ? await getDownloadUrl(shot.imagePath) : null,
+      clipPath: shot.clipPath,
+      clipStatus: shot.clipStatus ?? "pending",
+      clipUrl: shot.clipPath ? await getDownloadUrl(shot.clipPath) : null,
+      clipDurationSeconds: shot.clipDurationSeconds,
+      referencedEntityIds: shot.referencedEntityIds ?? [],
+    })),
+  );
+
+  return NextResponse.json({ shots: list });
+}
 
 export async function POST(request: NextRequest, { params }: Params) {
   const rateLimitError = applyRateLimit(request, "mutation");
