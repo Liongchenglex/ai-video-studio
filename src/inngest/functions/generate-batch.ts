@@ -58,14 +58,14 @@ export const generateBatchFn = inngest.createFunction(
       const results = await Promise.all(
         chunk.map((entityId) =>
           step.run(`sheet-${entityId}`, async () => {
-            const [row] = await db
-              .select({ entity: entities, project: projects })
-              .from(entities)
-              .innerJoin(projects, eq(entities.projectId, projects.id))
-              .where(and(eq(entities.id, entityId), eq(projects.id, projectId)))
-              .limit(1);
-            if (!row) return { ok: false };
             try {
+              const [row] = await db
+                .select({ entity: entities, project: projects })
+                .from(entities)
+                .innerJoin(projects, eq(entities.projectId, projects.id))
+                .where(and(eq(entities.id, entityId), eq(projects.id, projectId)))
+                .limit(1);
+              if (!row) return { ok: false };
               await generateEntitySheet(row.project, row.entity);
               return { ok: true };
             } catch (err) {
@@ -84,14 +84,14 @@ export const generateBatchFn = inngest.createFunction(
       const results = await Promise.all(
         chunk.map((shotId) =>
           step.run(`image-${shotId}`, async () => {
-            const [row] = await db
-              .select({ shot: shots, project: projects })
-              .from(shots)
-              .innerJoin(projects, eq(shots.projectId, projects.id))
-              .where(and(eq(shots.id, shotId), eq(projects.id, projectId)))
-              .limit(1);
-            if (!row) return { ok: false };
             try {
+              const [row] = await db
+                .select({ shot: shots, project: projects })
+                .from(shots)
+                .innerJoin(projects, eq(shots.projectId, projects.id))
+                .where(and(eq(shots.id, shotId), eq(projects.id, projectId)))
+                .limit(1);
+              if (!row) return { ok: false };
               await generateShotImage(row.project, row.shot);
               return { ok: true };
             } catch (err) {
@@ -124,14 +124,14 @@ export const generateBatchFn = inngest.createFunction(
         const results = await Promise.all(
           chunk.map((shotId) =>
             step.run(`clip-${shotId}`, async () => {
-              const [row] = await db
-                .select({ shot: shots, project: projects })
-                .from(shots)
-                .innerJoin(projects, eq(shots.projectId, projects.id))
-                .where(and(eq(shots.id, shotId), eq(projects.id, projectId)))
-                .limit(1);
-              if (!row) return { ok: false };
               try {
+                const [row] = await db
+                  .select({ shot: shots, project: projects })
+                  .from(shots)
+                  .innerJoin(projects, eq(shots.projectId, projects.id))
+                  .where(and(eq(shots.id, shotId), eq(projects.id, projectId)))
+                  .limit(1);
+                if (!row) return { ok: false };
                 await generateShotClip(row.project, row.shot);
                 return { ok: true };
               } catch (err) {
