@@ -161,6 +161,15 @@ app's existing IDOR-hiding convention, no distinct 403).
   — and by the time it runs, `computeBatchTargets()` is re-evaluated, so it
   finds nothing left to do (or only whatever is still missing). Worst case
   is one wasted `compute-targets` step, not a double bill.
+- **Inngest transport is the orchestrator's only authorization** (security
+  review 2026-07-07, High → fixed): the batch function trusts its event
+  payload, so `POST /api/inngest` MUST reject unsigned requests in
+  production. The SDK fails closed — in non-dev mode `serve()` throws if
+  `INNGEST_SIGNING_KEY` is missing — so the only dangerous state is running
+  production with `INNGEST_DEV` set. Both `INNGEST_SIGNING_KEY` and
+  `INNGEST_EVENT_KEY` are now documented as required-in-production in
+  `.env.example`; provisioning them (and never setting `INNGEST_DEV` in
+  prod) is a deploy-time release gate.
 - **Secrets:** `FAL_KEY` read only inside the extracted `src/lib/` services
   (server-side), unchanged from before the refactor.
 
