@@ -1,10 +1,12 @@
 /**
  * POST /api/projects/[id]/shots/[shotId]/clip
- * Generates (or regenerates) the animation clip for a shot using LTX-2.3
- * image-to-video via fal.ai. Delegates to generateShotClip service which
- * handles the upload, fal.ai call, and R2 storage.
+ * Generates (or regenerates) the animation clip for a shot. Supports multi-model via registry;
+ * routes to the appropriate model handler (e.g., LTX-2.3 via fal.ai).
+ * Optional body: { model?: ClipModelId }. Absent/empty body defaults to registry.
+ * Delegates to generateShotClip service which handles the upload, API call, and R2 storage.
  *
- * Synchronous: awaits fal.ai. Typical latency 60-120s per clip.
+ * Synchronous: awaits API. Typical latency 60-120s per clip.
+ * Response: includes clipModel and optional chainSkippedReason.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -20,6 +22,7 @@ import {
   applyRateLimit,
 } from "@/lib/api-utils";
 import { generateShotClip } from "@/lib/shot-clip-generation";
+import { isClipModelId } from "@/lib/clip-models";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
 
@@ -49,8 +52,23 @@ export async function POST(request: NextRequest, { params }: Params) {
     return badRequestResponse("Generate the shot's image before generating a clip");
   }
 
+  // Optional body: { model?: ClipModelId }. Absent/empty body = defaults.
+  let model: string | undefined;
+  const raw = await request.text();
+  if (raw) {
+    try {
+      const body = JSON.parse(raw) as { model?: unknown };
+      if (body.model !== undefined) {
+        if (!isClipModelId(body.model)) return badRequestResponse("Unknown clip model");
+        model = body.model;
+      }
+    } catch {
+      return badRequestResponse("Invalid request body");
+    }
+  }
+
   try {
-    const result = await generateShotClip(project, shot);
+    const result = await generateShotClip(project, shot, { model });
     return NextResponse.json({ ...result, clipStatus: "done" });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
