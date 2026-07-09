@@ -31,11 +31,14 @@ export async function uploadR2ObjectToFal(
       upload_url: string;
       file_url: string;
     };
-    await fetch(upload_url, {
+    const putRes = await fetch(upload_url, {
       method: "PUT",
       headers: { "Content-Type": opts.contentType },
       body: buffer,
     });
+    if (!putRes.ok) {
+      throw new Error(`fal storage upload failed (${putRes.status}) for ${opts.fileName}`);
+    }
     return file_url;
   }
 
