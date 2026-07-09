@@ -349,8 +349,14 @@ function ShotEditPanel({
 
   useEffect(() => {
     setClipModelId(shot.clipModel ?? DEFAULT_CLIP_MODEL_ID);
-    setSfxPrompt("");
   }, [shot.id, shot.clipModel]);
+
+  // Reset the SFX prompt only when the selection moves to another shot —
+  // NOT on clipModel changes: picking a model in the dropdown optimistically
+  // patches shot.clipModel, and that must not wipe an in-progress prompt.
+  useEffect(() => {
+    setSfxPrompt("");
+  }, [shot.id]);
 
   const prevImageUrl = useRef(shot.imageUrl);
   const prevClipUrl = useRef(shot.clipUrl);
