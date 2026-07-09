@@ -252,7 +252,14 @@ function ActiveShotPreview({ shot }: { shot: EditorShot }) {
   return (
     <>
       {shot.clipUrl ? (
-        <video key={shot.id} src={shot.clipUrl} autoPlay muted loop className="w-full rounded" />
+        <video
+          key={shot.id}
+          src={shot.sfxUrl ?? shot.clipUrl}
+          autoPlay
+          muted={!shot.sfxUrl}
+          loop
+          className="w-full rounded"
+        />
       ) : shot.imageUrl ? (
         /* eslint-disable-next-line @next/next/no-img-element */
         <img src={shot.imageUrl} alt="" className="w-full rounded" />
@@ -506,7 +513,14 @@ function ShotEditPanel({
       )}
 
       {effectiveMode === "clip" && shot.clipUrl ? (
-        <video key={shot.clipUrl} src={shot.clipUrl} autoPlay muted loop className="w-full rounded" />
+        <video
+          key={shot.sfxUrl ?? shot.clipUrl}
+          src={shot.sfxUrl ?? shot.clipUrl}
+          autoPlay
+          muted={!shot.sfxUrl}
+          loop
+          className="w-full rounded"
+        />
       ) : effectiveMode === "image" && shot.imageUrl ? (
         /* eslint-disable-next-line @next/next/no-img-element */
         <img key={shot.imageUrl} src={shot.imageUrl} alt="" className="w-full rounded" />
