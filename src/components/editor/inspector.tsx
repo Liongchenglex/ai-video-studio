@@ -32,11 +32,14 @@ import {
   Box,
   Star,
   TextCursorInput,
+  Music,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { VoiceSelector } from "@/components/voice-selector";
+import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, getClipModel } from "@/lib/clip-models";
 import {
   useEditor,
   absoluteShotRange,
@@ -299,11 +302,14 @@ function ShotEditPanel({
     projectId,
     beats,
     entities,
+    shots,
     updateShot,
     deleteShot,
     splitShot,
     generateImage,
     generateClip,
+    generateSfx,
+    removeSfx,
     tagShot,
   } = useEditor();
   // Narration under the shot's time range — the concatenated text of every
@@ -322,10 +328,29 @@ function ShotEditPanel({
     shot.clipUrl ? "clip" : "image",
   );
 
+  // Clip model selection + chaining (Clip Engine v2). `clipModelId` is local
+  // UI state persisted to the shot only on change, so the dropdown reflects
+  // the shot's saved model on mount / when the selection moves to another shot.
+  const [clipModelId, setClipModelId] = useState(shot.clipModel ?? DEFAULT_CLIP_MODEL_ID);
+  const [sfxPrompt, setSfxPrompt] = useState("");
+  const selectedModel = getClipModel(clipModelId) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
+  const sortedShots = [...shots].sort((a, b) => a.sortOrder - b.sortOrder);
+  const nextShot = sortedShots[sortedShots.findIndex((s) => s.id === shot.id) + 1] ?? null;
+  const chainDisabledReason = !selectedModel.supportsEndFrame
+    ? `${selectedModel.label} can't take an end frame — pick a model marked "chains"`
+    : !nextShot
+      ? "Last shot — nothing to chain into"
+      : null;
+
   useEffect(() => {
     setImagePrompt(shot.imagePrompt);
     setMotionPrompt(shot.motionPrompt);
   }, [shot.id, shot.imagePrompt, shot.motionPrompt]);
+
+  useEffect(() => {
+    setClipModelId(shot.clipModel ?? DEFAULT_CLIP_MODEL_ID);
+    setSfxPrompt("");
+  }, [shot.id, shot.clipModel]);
 
   const prevImageUrl = useRef(shot.imageUrl);
   const prevClipUrl = useRef(shot.clipUrl);
@@ -671,14 +696,12 @@ function ShotEditPanel({
           size="sm"
           variant="default"
           className="flex-1"
-          onClick={() => generateClip(shot.id)}
+          onClick={() => generateClip(shot.id, clipModelId)}
           disabled={!shot.imagePath || shot.clipStatus === "generating"}
           title={
             !shot.imagePath
               ? "Generate image first"
-              : shot.clipPath
-                ? "Regenerate clip (LTX)"
-                : "Generate clip (LTX)"
+              : `${shot.clipPath ? "Regenerate" : "Generate"} clip with ${selectedModel.label} (~$${selectedModel.estUsdPerClip.toFixed(2)})`
           }
         >
           {shot.clipStatus === "generating" ? (
@@ -686,9 +709,97 @@ function ShotEditPanel({
           ) : (
             <Film className="mr-1 h-3 w-3" />
           )}
-          {shot.clipPath ? "Re-clip" : "Clip"} (LTX)
+          {shot.clipPath ? "Re-clip" : "Clip"}
         </Button>
       </div>
+
+      {/* Clip model + chaining */}
+      <div className="space-y-1.5">
+        <select
+          value={clipModelId}
+          onChange={(e) => {
+            setClipModelId(e.target.value);
+            updateShot(shot.id, { clipModel: e.target.value });
+          }}
+          className="w-full rounded border bg-background p-1.5 text-xs"
+          title={selectedModel.whenToUse}
+        >
+          {CLIP_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label} — ~${m.estUsdPerClip.toFixed(2)}
+              {m.supportsEndFrame ? " · chains" : ""}
+              {m.nativeAudio ? " · audio" : ""}
+            </option>
+          ))}
+        </select>
+        <p className="text-[10px] text-muted-foreground">{selectedModel.whenToUse}</p>
+
+        <label
+          className="flex items-center gap-2 text-xs"
+          title={chainDisabledReason ?? "End this clip on the next shot's image for a seamless cut"}
+        >
+          <input
+            type="checkbox"
+            checked={shot.chainToNext && !chainDisabledReason}
+            disabled={!!chainDisabledReason}
+            onChange={(e) => updateShot(shot.id, { chainToNext: e.target.checked })}
+          />
+          Chain to next shot
+          {shot.chainToNext && !chainDisabledReason && nextShot?.imageUrl && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={nextShot.imageUrl}
+              alt="Next shot's image (this clip's end frame)"
+              className="ml-auto h-8 w-14 rounded object-cover"
+            />
+          )}
+        </label>
+        {chainDisabledReason && (
+          <p className="text-[10px] text-muted-foreground">{chainDisabledReason}</p>
+        )}
+      </div>
+
+      {/* SFX */}
+      {shot.clipPath && shot.clipStatus === "done" && (
+        <div className="space-y-1.5">
+          <div className="flex gap-2">
+            <input
+              value={sfxPrompt}
+              onChange={(e) => setSfxPrompt(e.target.value)}
+              maxLength={500}
+              placeholder="Optional: steer the SFX (e.g. ticking clock, bell chime)"
+              className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => generateSfx(shot.id, sfxPrompt)}
+              disabled={shot.sfxStatus === "generating"}
+              title="Generate synced sound effects with MMAudio (~$0.01) — the clip itself is untouched"
+            >
+              {shot.sfxStatus === "generating" ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Music className="mr-1 h-3 w-3" />
+              )}
+              {shot.sfxPath ? "Re-roll SFX" : "Add SFX"}
+            </Button>
+            {shot.sfxPath && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => removeSfx(shot.id)}
+                title="Remove SFX (keeps the clip)"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            )}
+          </div>
+          {shot.sfxStatus === "failed" && (
+            <p className="text-[10px] text-destructive">SFX generation failed. Retry above.</p>
+          )}
+        </div>
+      )}
 
       {shot.imageStatus === "failed" && (
         <p className="text-[10px] text-destructive">Image generation failed. Retry above.</p>

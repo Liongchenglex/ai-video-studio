@@ -225,6 +225,8 @@ interface EditorContextValue {
         | "imagePrompt"
         | "motionPrompt"
         | "referencedEntityIds"
+        | "clipModel"
+        | "chainToNext"
       >
     >,
   ): Promise<void>;
@@ -365,6 +367,8 @@ export function EditorProvider(props: {
           | "imagePrompt"
           | "motionPrompt"
           | "referencedEntityIds"
+          | "clipModel"
+          | "chainToNext"
         >
       >,
     ) => {
