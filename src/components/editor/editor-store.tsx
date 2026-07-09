@@ -56,6 +56,11 @@ export interface EditorShot {
   clipStatus: string;
   clipUrl: string | null;
   clipDurationSeconds: number | null;
+  clipModel: string | null;
+  chainToNext: boolean;
+  sfxPath: string | null;
+  sfxStatus: string;
+  sfxUrl: string | null;
   // Reference Bible tagging (F-16) — populated server-side by page.tsx from
   // the DB column (which defaults to [] there too); always an array here.
   referencedEntityIds: string[];
@@ -75,6 +80,7 @@ export interface GenerateAllPreview {
   sheets: { count: number; estUsd: number };
   images: { count: number; estUsd: number };
   clips: { count: number; estUsd: number };
+  sfx: { count: number; estUsd: number };
   totalUsd: number;
   totalWithClipsUsd: number;
   batchRunning: boolean;
@@ -225,7 +231,9 @@ interface EditorContextValue {
   deleteShot(shotId: string): Promise<void>;
   splitShot(shotId: string, atInBeat: number): Promise<void>;
   generateImage(shotId: string): Promise<void>;
-  generateClip(shotId: string, model?: "ltx" | "hailuo"): Promise<void>;
+  generateClip(shotId: string, model?: string): Promise<void>;
+  generateSfx(shotId: string, prompt?: string): Promise<void>;
+  removeSfx(shotId: string): Promise<void>;
   recommendShots(): Promise<void>;
   recommending: boolean;
   createEntity(
@@ -487,12 +495,13 @@ export function EditorProvider(props: {
   );
 
   const generateClip = useCallback(
-    async (shotId: string, model: "ltx" | "hailuo" = "ltx") => {
-      const endpoint = model === "hailuo" ? "clip-hailuo" : "clip";
+    async (shotId: string, model?: string) => {
       dispatch({ type: "patchShot", shotId, patch: { clipStatus: "generating" } });
       try {
-        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/${endpoint}`, {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/clip`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(model ? { model } : {}),
         });
         if (!res.ok) {
           console.warn("[editor-store] clip generation failed:", await res.text());
@@ -504,7 +513,12 @@ export function EditorProvider(props: {
           clipUrl: string;
           clipStatus: string;
           clipDurationSeconds: number;
+          clipModel: string;
+          chainSkippedReason?: string;
         };
+        if (data.chainSkippedReason) {
+          console.warn(`[editor-store] chain skipped: ${data.chainSkippedReason}`);
+        }
         dispatch({
           type: "patchShot",
           shotId,
@@ -513,11 +527,66 @@ export function EditorProvider(props: {
             clipUrl: data.clipUrl,
             clipStatus: "done",
             clipDurationSeconds: data.clipDurationSeconds,
+            clipModel: data.clipModel,
+            // A fresh clip invalidates any previous SFX (server did the same).
+            sfxPath: null,
+            sfxStatus: "pending",
+            sfxUrl: null,
           },
         });
       } catch (err) {
         console.error("[editor-store] clip generation error:", err);
         dispatch({ type: "patchShot", shotId, patch: { clipStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const generateSfx = useCallback(
+    async (shotId: string, prompt?: string) => {
+      dispatch({ type: "patchShot", shotId, patch: { sfxStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/sfx`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(prompt?.trim() ? { prompt: prompt.trim() } : {}),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] sfx generation failed:", await res.text());
+          dispatch({ type: "patchShot", shotId, patch: { sfxStatus: "failed" } });
+          return;
+        }
+        const data = (await res.json()) as { sfxPath: string; sfxUrl: string };
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: { sfxPath: data.sfxPath, sfxUrl: data.sfxUrl, sfxStatus: "done" },
+        });
+      } catch (err) {
+        console.error("[editor-store] sfx generation error:", err);
+        dispatch({ type: "patchShot", shotId, patch: { sfxStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const removeSfx = useCallback(
+    async (shotId: string) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/sfx`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] sfx removal failed:", await res.text());
+          return;
+        }
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: { sfxPath: null, sfxUrl: null, sfxStatus: "pending" },
+        });
+      } catch (err) {
+        console.error("[editor-store] sfx removal error:", err);
       }
     },
     [projectId],
@@ -535,7 +604,7 @@ export function EditorProvider(props: {
       }
       const data = (await res.json()) as { shots: EditorShot[] };
       // The recommend response rows are raw DB fields — no presigned URLs.
-      const shots = data.shots.map((s) => ({ ...s, imageUrl: null, clipUrl: null }));
+      const shots = data.shots.map((s) => ({ ...s, imageUrl: null, clipUrl: null, sfxUrl: null }));
       dispatch({ type: "setShots", shots });
     } catch (err) {
       console.error("[editor-store] recommend shots fetch failed:", err);
@@ -855,6 +924,8 @@ export function EditorProvider(props: {
     splitShot,
     generateImage,
     generateClip,
+    generateSfx,
+    removeSfx,
     recommendShots,
     recommending,
     createEntity,

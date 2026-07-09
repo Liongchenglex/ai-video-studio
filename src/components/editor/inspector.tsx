@@ -671,7 +671,7 @@ function ShotEditPanel({
           size="sm"
           variant="default"
           className="flex-1"
-          onClick={() => generateClip(shot.id, "ltx")}
+          onClick={() => generateClip(shot.id)}
           disabled={!shot.imagePath || shot.clipStatus === "generating"}
           title={
             !shot.imagePath
@@ -687,25 +687,6 @@ function ShotEditPanel({
             <Film className="mr-1 h-3 w-3" />
           )}
           {shot.clipPath ? "Re-clip" : "Clip"} (LTX)
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          className="flex-1"
-          onClick={() => generateClip(shot.id, "hailuo")}
-          disabled={!shot.imagePath || shot.clipStatus === "generating"}
-          title={
-            !shot.imagePath
-              ? "Generate image first"
-              : "A/B test: generate with Hailuo 02 instead of LTX (overwrites current clip)"
-          }
-        >
-          {shot.clipStatus === "generating" ? (
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-          ) : (
-            <Film className="mr-1 h-3 w-3" />
-          )}
-          Clip (Hailuo)
         </Button>
       </div>
 
