@@ -1,71 +1,80 @@
 /**
- * Shot clip generation service (v4 P3 extraction). LTX-2.3 image-to-video
- * via fal.ai: uploads the shot's still image to fal storage (fal can't
- * always read R2 presigned URLs), generates a ~6s clip from the motion
- * prompt, stores at projects/{projectId}/shots/{shotId}/clip.mp4. Owns the
+ * Shot clip generation service (v4 P3 extraction; multi-model since Clip
+ * Engine v2). Resolves the clip model from the registry (explicit param →
+ * shot.clipModel → default), optionally passes the NEXT shot's still as the
+ * end frame when shot.chainToNext is set and the model supports it (a
+ * skipped chain degrades to unchained generation and reports why), calls
+ * fal, and stores at projects/{projectId}/shots/{shotId}/clip.mp4. Owns the
  * clipStatus generating → done/failed lifecycle; throws after marking
- * failed. Caller must ensure shot.imagePath is set. Called by
- * POST /shots/[shotId]/clip AND the batch orchestrator (Hailuo A/B route
- * stays separate — batch always uses the default LTX provider).
+ * failed. Regenerating a clip resets any SFX variant — the old audio no
+ * longer matches. Caller must ensure shot.imagePath is set. Called by
+ * POST /shots/[shotId]/clip AND the batch orchestrator.
  */
 import { db } from "@/lib/db";
 import { shots, type Project, type Shot } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, gt, asc } from "drizzle-orm";
 import { fal } from "@fal-ai/client";
-import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, getDownloadUrl } from "@/lib/r2";
+import { uploadR2ObjectToFal } from "@/lib/fal-upload";
+import {
+  getClipModel,
+  DEFAULT_CLIP_MODEL_ID,
+  type ClipModelId,
+} from "@/lib/clip-models";
+import { resolveChainDecision, type ChainSkipReason } from "@/lib/clip-chaining";
 
 fal.config({ credentials: process.env.FAL_KEY! });
-
-async function uploadImageToFal(r2Key: string): Promise<string> {
-  // Pull the image bytes out of R2
-  const r2Object = await r2Client.send(
-    new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME!, Key: r2Key }),
-  );
-  const imageBytes = await r2Object.Body!.transformToByteArray();
-  const imageBuffer = Buffer.from(imageBytes);
-
-  // Ask fal for a one-shot upload URL
-  const initRes = await fetch("https://rest.alpha.fal.ai/storage/upload/initiate", {
-    method: "POST",
-    headers: {
-      Authorization: `Key ${process.env.FAL_KEY!}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ file_name: "shot-image.png", content_type: "image/png" }),
-  });
-
-  if (initRes.ok) {
-    const { upload_url, file_url } = (await initRes.json()) as {
-      upload_url: string;
-      file_url: string;
-    };
-    await fetch(upload_url, {
-      method: "PUT",
-      headers: { "Content-Type": "image/png" },
-      body: imageBuffer,
-    });
-    return file_url;
-  }
-
-  // Fallback: some fal models accept R2 presigned URLs directly
-  return getDownloadUrl(r2Key);
-}
 
 export async function generateShotClip(
   project: Project,
   shot: Shot,
-): Promise<{ clipPath: string; clipUrl: string; clipDurationSeconds: number }> {
+  opts?: { model?: string },
+): Promise<{
+  clipPath: string;
+  clipUrl: string;
+  clipDurationSeconds: number;
+  clipModel: ClipModelId;
+  chainSkippedReason?: ChainSkipReason;
+}> {
+  const spec =
+    getClipModel(opts?.model) ??
+    getClipModel(shot.clipModel) ??
+    getClipModel(DEFAULT_CLIP_MODEL_ID)!;
+
   await db.update(shots).set({ clipStatus: "generating" }).where(eq(shots.id, shot.id));
 
   try {
     console.log(
-      `[shot-clip] project=${project.id} shot=${shot.id} | motion: ${shot.motionPrompt.substring(0, 120)}...`,
+      `[shot-clip] project=${project.id} shot=${shot.id} model=${spec.id} | motion: ${shot.motionPrompt.substring(0, 120)}...`,
     );
 
-    const falImageUrl = await uploadImageToFal(shot.imagePath!);
-    const result = await fal.subscribe("fal-ai/ltx-2.3/image-to-video", {
-      input: { image_url: falImageUrl, prompt: shot.motionPrompt },
+    const [nextShot] = await db
+      .select({ imagePath: shots.imagePath, imageStatus: shots.imageStatus })
+      .from(shots)
+      .where(and(eq(shots.projectId, project.id), gt(shots.sortOrder, shot.sortOrder)))
+      .orderBy(asc(shots.sortOrder))
+      .limit(1);
+
+    const chain = resolveChainDecision({
+      chainToNext: shot.chainToNext,
+      spec,
+      nextShot: nextShot ?? null,
+    });
+
+    const imageUrl = await uploadR2ObjectToFal(shot.imagePath!, {
+      fileName: "shot-image.png",
+      contentType: "image/png",
+    });
+    const tailImageUrl = chain.useTail
+      ? await uploadR2ObjectToFal(chain.tailImagePath, {
+          fileName: "shot-tail-image.png",
+          contentType: "image/png",
+        })
+      : undefined;
+
+    const result = await fal.subscribe(spec.falEndpoint, {
+      input: spec.buildInput({ imageUrl, prompt: shot.motionPrompt, tailImageUrl }),
       logs: true,
       onQueueUpdate: (update) => {
         if (update.status === "IN_PROGRESS" && "logs" in update) {
@@ -75,8 +84,8 @@ export async function generateShotClip(
     });
 
     const output = result.data as { video?: { url: string; duration?: number } };
-    if (!output.video?.url) throw new Error("LTX-2.3 returned no video");
-    const clipDuration = output.video.duration ?? 6;
+    if (!output.video?.url) throw new Error(`${spec.label} returned no video`);
+    const clipDuration = output.video.duration ?? spec.durationSeconds;
 
     const videoRes = await fetch(output.video.url);
     if (!videoRes.ok) throw new Error("Failed to download generated clip");
@@ -92,16 +101,30 @@ export async function generateShotClip(
       }),
     );
 
+    // SFX is invalidated by a new clip: the old audio no longer matches.
     await db
       .update(shots)
-      .set({ clipPath: r2Key, clipStatus: "done", clipDurationSeconds: Math.round(clipDuration) })
+      .set({
+        clipPath: r2Key,
+        clipStatus: "done",
+        clipDurationSeconds: Math.round(clipDuration),
+        clipModel: spec.id,
+        sfxPath: null,
+        sfxStatus: "pending",
+      })
       .where(eq(shots.id, shot.id));
 
-    console.log(`[shot-clip] done: ${r2Key} (${clipDuration}s)`);
+    const chainSkippedReason =
+      shot.chainToNext && !chain.useTail ? chain.reason : undefined;
+    console.log(
+      `[shot-clip] done: ${r2Key} (${clipDuration}s, ${spec.id}${chainSkippedReason ? `, chain skipped: ${chainSkippedReason}` : chain.useTail ? ", chained" : ""})`,
+    );
     return {
       clipPath: r2Key,
       clipUrl: await getDownloadUrl(r2Key),
       clipDurationSeconds: Math.round(clipDuration),
+      clipModel: spec.id,
+      ...(chainSkippedReason ? { chainSkippedReason } : {}),
     };
   } catch (error) {
     await db.update(shots).set({ clipStatus: "failed" }).where(eq(shots.id, shot.id)).catch(() => {});
