@@ -1,6 +1,6 @@
 // Tests for the clip model registry (src/lib/clip-models.ts): default model
 // selection, id lookup/type-guarding, and per-model buildInput() mapping
-// (LTX ignores tail image, Kling maps tail_image_url + fixed duration).
+// (LTX maps end_image_url + disables audio, Kling maps tail_image_url + fixed duration).
 import { describe, it, expect } from "vitest";
 import {
   CLIP_MODELS,
@@ -35,13 +35,29 @@ describe("clip model registry", () => {
     }
   });
 
-  it("LTX buildInput ignores tail image (no end-frame support)", () => {
-    const input = getClipModel("ltx-2.3")!.buildInput({
-      imageUrl: "https://fal/img.png",
+  it("LTX buildInput maps end_image_url and disables audio", () => {
+    const ltx = getClipModel("ltx-2.3")!;
+    expect(ltx.supportsEndFrame).toBe(true);
+    expect(ltx.estUsdPerClip).toBe(0.36);
+    expect(
+      ltx.buildInput({
+        imageUrl: "https://fal/img.png",
+        prompt: "clock swings",
+        tailImageUrl: "https://fal/tail.png",
+      }),
+    ).toEqual({
+      image_url: "https://fal/img.png",
       prompt: "clock swings",
-      tailImageUrl: "https://fal/tail.png",
+      generate_audio: false,
+      end_image_url: "https://fal/tail.png",
     });
-    expect(input).toEqual({ image_url: "https://fal/img.png", prompt: "clock swings" });
+    expect(
+      ltx.buildInput({ imageUrl: "https://fal/img.png", prompt: "clock swings" }),
+    ).toEqual({
+      image_url: "https://fal/img.png",
+      prompt: "clock swings",
+      generate_audio: false,
+    });
   });
 
   it("Kling buildInput maps tail_image_url and fixed duration", () => {

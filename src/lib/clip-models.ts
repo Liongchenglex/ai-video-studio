@@ -56,11 +56,18 @@ export const CLIP_MODELS: ClipModelSpec[] = [
     label: "LTX 2.3",
     falEndpoint: "fal-ai/ltx-2.3/image-to-video",
     durationSeconds: 6,
-    supportsEndFrame: false,
+    supportsEndFrame: true,
     nativeAudio: false,
-    estUsdPerClip: 0.25,
-    whenToUse: "Cheap drafts — fast and low-cost, but weak at directed motion; no chaining.",
-    buildInput: ({ imageUrl, prompt }) => ({ image_url: imageUrl, prompt }),
+    estUsdPerClip: 0.36,
+    whenToUse: "Cheap drafts — fast and low-cost, but weak at directed motion.",
+    // generate_audio defaults to true on fal's LTX endpoint; force it off —
+    // the MMAudio SFX flow owns audio, we don't want an embedded soundtrack.
+    buildInput: ({ imageUrl, prompt, tailImageUrl }) => ({
+      image_url: imageUrl,
+      prompt,
+      generate_audio: false,
+      ...(tailImageUrl ? { end_image_url: tailImageUrl } : {}),
+    }),
   },
   {
     id: "veo-3.1-fast",
