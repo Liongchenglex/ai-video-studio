@@ -252,8 +252,16 @@ interface EditorContextValue {
   extractEntities(): Promise<{ created: number; taggedShots: number } | null>;
   extracting: boolean;
   tagShot(shotId: string, entityIds: string[]): Promise<void>;
-  fetchGenerateAllPreview(): Promise<GenerateAllPreview | null>;
-  generateAll(includeClips: boolean): Promise<boolean>;
+  fetchGenerateAllPreview(opts?: {
+    clipModel?: string;
+    includeSfx?: boolean;
+  }): Promise<GenerateAllPreview | null>;
+  generateAll(opts: {
+    includeClips: boolean;
+    clipModel?: string;
+    suggestChains?: boolean;
+    includeSfx?: boolean;
+  }): Promise<boolean>;
   batchActive: boolean;
 }
 
@@ -782,25 +790,40 @@ export function EditorProvider(props: {
     [],
   );
 
-  const fetchGenerateAllPreview =
-    useCallback(async (): Promise<GenerateAllPreview | null> => {
+  const fetchGenerateAllPreview = useCallback(
+    async (opts?: {
+      clipModel?: string;
+      includeSfx?: boolean;
+    }): Promise<GenerateAllPreview | null> => {
       try {
-        const res = await fetch(`/api/projects/${projectId}/generate-all/preview`);
+        const qs = new URLSearchParams();
+        if (opts?.clipModel) qs.set("clipModel", opts.clipModel);
+        if (opts?.includeSfx) qs.set("includeSfx", "true");
+        const res = await fetch(
+          `/api/projects/${projectId}/generate-all/preview${qs.size ? `?${qs}` : ""}`,
+        );
         if (!res.ok) return null;
         return (await res.json()) as GenerateAllPreview;
       } catch (err) {
         console.error("[editor-store] preview fetch error:", err);
         return null;
       }
-    }, [projectId]);
+    },
+    [projectId],
+  );
 
   const generateAll = useCallback(
-    async (includeClips: boolean): Promise<boolean> => {
+    async (opts: {
+      includeClips: boolean;
+      clipModel?: string;
+      suggestChains?: boolean;
+      includeSfx?: boolean;
+    }): Promise<boolean> => {
       try {
         const res = await fetch(`/api/projects/${projectId}/generate-all`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ includeClips }),
+          body: JSON.stringify(opts),
         });
         if (!res.ok) {
           console.warn("[editor-store] generate-all dispatch failed:", await res.text());
@@ -872,6 +895,11 @@ export function EditorProvider(props: {
               clipPath: f.clipPath,
               clipUrl: f.clipUrl,
               clipDurationSeconds: f.clipDurationSeconds,
+              clipModel: f.clipModel,
+              chainToNext: f.chainToNext,
+              sfxPath: f.sfxPath,
+              sfxStatus: f.sfxStatus,
+              sfxUrl: f.sfxUrl,
             },
           });
         }

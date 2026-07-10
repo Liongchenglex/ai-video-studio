@@ -4,7 +4,9 @@
  * targets server-side (never trusts client counts), refuses while a batch is
  * already running (409), then emits one `project/batch.generate` Inngest
  * event — the orchestrator does all paid work in the background. Body:
- * { includeClips: boolean }.
+ * { includeClips: boolean; clipModel?: ClipModelId; suggestChains?: boolean;
+ * includeSfx?: boolean } — the three new fields only matter when
+ * includeClips is true.
  * Known small race: between this 202 and the orchestrator's first step no
  * row is `generating` yet, so a second POST in that window double-dispatches
  * — harmless, because the function has per-project concurrency 1 and
@@ -25,6 +27,7 @@ import {
 } from "@/lib/api-utils";
 import { computeBatchTargets } from "@/lib/batch-targeting";
 import { inngest } from "@/inngest";
+import { isClipModelId } from "@/lib/clip-models";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -49,12 +52,36 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!project || project.deletedAt) return notFoundResponse();
 
   let includeClips = false;
+  let clipModel: string | undefined;
+  let suggestChains = false;
+  let includeSfx = false;
   try {
-    const body = (await request.json()) as { includeClips?: unknown };
+    const body = (await request.json()) as {
+      includeClips?: unknown;
+      clipModel?: unknown;
+      suggestChains?: unknown;
+      includeSfx?: unknown;
+    };
     if (typeof body.includeClips !== "boolean") {
       return badRequestResponse("includeClips must be a boolean");
     }
     includeClips = body.includeClips;
+    if (body.clipModel !== undefined) {
+      if (!isClipModelId(body.clipModel)) return badRequestResponse("Unknown clip model");
+      clipModel = body.clipModel;
+    }
+    if (body.suggestChains !== undefined) {
+      if (typeof body.suggestChains !== "boolean") {
+        return badRequestResponse("suggestChains must be a boolean");
+      }
+      suggestChains = body.suggestChains;
+    }
+    if (body.includeSfx !== undefined) {
+      if (typeof body.includeSfx !== "boolean") {
+        return badRequestResponse("includeSfx must be a boolean");
+      }
+      includeSfx = body.includeSfx;
+    }
   } catch {
     return badRequestResponse("Invalid request body");
   }
@@ -73,7 +100,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   await inngest.send({
     name: "project/batch.generate",
-    data: { projectId: id, includeClips },
+    data: { projectId: id, includeClips, clipModel, suggestChains, includeSfx },
   });
 
   console.log(
