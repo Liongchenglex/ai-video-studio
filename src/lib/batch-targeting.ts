@@ -1,9 +1,12 @@
 /**
- * Missing-only targeting for batch "Generate all" (v4 P3). One computation
- * used by the preview endpoint, the dispatch endpoint, and the Inngest
- * orchestrator, so the three can never disagree about what a batch covers.
- * Missing = status pending|failed. done is never re-billed; generating is
- * skipped (in-flight).
+ * Missing-only targeting for batch "Generate all" (v4 P3; SFX-aware since
+ * Clip Engine v2). One computation used by the preview endpoint, the
+ * dispatch endpoint, and the Inngest orchestrator, so the three can never
+ * disagree about what a batch covers. Missing = status pending|failed.
+ * done is never re-billed; generating is skipped (in-flight). sfxShotIds
+ * counts shots whose clip is already done but SFX isn't — an SFX pass over
+ * clips generated THIS run is on top of these (the orchestrator recomputes
+ * after wave 3).
  *
  * Also self-heals stale `generating` rows before reading them (see
  * STALE_GENERATING_MINUTES below) — this is why the function does a write
@@ -17,6 +20,7 @@ export interface BatchTargets {
   sheetEntityIds: string[];
   imageShotIds: string[];
   clipShotIds: string[];
+  sfxShotIds: string[];
   anyGenerating: boolean;
 }
 
@@ -78,6 +82,7 @@ export async function computeBatchTargets(projectId: string): Promise<BatchTarge
       id: shots.id,
       imageStatus: shots.imageStatus,
       clipStatus: shots.clipStatus,
+      sfxStatus: shots.sfxStatus,
       imagePrompt: shots.imagePrompt,
       motionPrompt: shots.motionPrompt,
       referencedEntityIds: shots.referencedEntityIds,
@@ -100,6 +105,9 @@ export async function computeBatchTargets(projectId: string): Promise<BatchTarge
       .map((s) => s.id),
     clipShotIds: shotRows
       .filter((s) => missing(s.clipStatus) && s.motionPrompt.trim().length > 0)
+      .map((s) => s.id),
+    sfxShotIds: shotRows
+      .filter((s) => s.clipStatus === "done" && missing(s.sfxStatus))
       .map((s) => s.id),
     anyGenerating:
       entityRows.some((e) => e.referenceStatus === "generating") ||

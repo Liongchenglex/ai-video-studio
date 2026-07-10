@@ -94,7 +94,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   const sheets = targets.sheetEntityIds.length;
   const images = targets.imageShotIds.length;
   const clips = includeClips ? targets.clipShotIds.length : 0;
-  if (sheets + images + clips === 0) {
+  // SFX-only runs are valid work: clips all done but missing their SFX pass.
+  const sfx =
+    includeClips && includeSfx ? targets.clipShotIds.length + targets.sfxShotIds.length : 0;
+  if (sheets + images + clips + sfx === 0) {
     return NextResponse.json({ dispatched: false, reason: "nothing-to-do" });
   }
 
@@ -104,7 +107,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   });
 
   console.log(
-    `[generate-all] dispatched project=${id} sheets=${sheets} images=${images} clips=${clips}`,
+    `[generate-all] dispatched project=${id} sheets=${sheets} images=${images} clips=${clips} sfx=${sfx}`,
   );
   return NextResponse.json({ dispatched: true, sheets, images, clips }, { status: 202 });
 }

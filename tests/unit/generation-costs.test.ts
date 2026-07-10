@@ -30,7 +30,12 @@ describe("estimateBatchCost", () => {
 
   it("adds SFX per clip when included", () => {
     const c = estimateBatchCost(counts, { includeSfx: true });
-    expect(c.sfxUsd).toBe(0.1); // 10 × $0.01
+    expect(c.sfxUsd).toBe(0.1); // 10 × $0.01 (sfx omitted falls back to clips)
     expect(c.totalWithClipsUsd).toBe(4.78);
+  });
+
+  it("prices SFX by the explicit sfx count when given", () => {
+    const c = estimateBatchCost({ ...counts, sfx: 14 }, { includeSfx: true });
+    expect(c.sfxUsd).toBe(0.14); // 14 × $0.01 — clips this run + done clips missing SFX
   });
 });

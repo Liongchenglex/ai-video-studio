@@ -46,11 +46,14 @@ export async function GET(request: NextRequest, { params }: Params) {
   const includeSfx = url.searchParams.get("includeSfx") === "true";
 
   const targets = await computeBatchTargets(id);
+  // Clips generated this run need SFX too, plus already-done clips missing it.
+  const sfxCount = includeSfx ? targets.clipShotIds.length + targets.sfxShotIds.length : 0;
   const cost = estimateBatchCost(
     {
       sheets: targets.sheetEntityIds.length,
       images: targets.imageShotIds.length,
       clips: targets.clipShotIds.length,
+      sfx: sfxCount,
     },
     { clipModelId: clipModelParam ?? undefined, includeSfx },
   );
@@ -59,7 +62,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     sheets: { count: targets.sheetEntityIds.length, estUsd: cost.sheetsUsd },
     images: { count: targets.imageShotIds.length, estUsd: cost.imagesUsd },
     clips: { count: targets.clipShotIds.length, estUsd: cost.clipsUsd },
-    sfx: { count: includeSfx ? targets.clipShotIds.length : 0, estUsd: cost.sfxUsd },
+    sfx: { count: sfxCount, estUsd: cost.sfxUsd },
     totalUsd: cost.totalUsd,
     totalWithClipsUsd: cost.totalWithClipsUsd,
     batchRunning: targets.anyGenerating,

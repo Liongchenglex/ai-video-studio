@@ -59,11 +59,14 @@ export function GenerateAllDialog({
       .finally(() => setLoading(false));
   }, [open, clipModel, includeSfx, fetchGenerateAllPreview]);
 
+  // An SFX pass over already-done clips is real work even when nothing else is.
+  const sfxWork = includeClips && includeSfx && preview !== null && preview.sfx.count > 0;
   const nothingToDo =
     preview !== null &&
     preview.sheets.count === 0 &&
     preview.images.count === 0 &&
-    (!includeClips || preview.clips.count === 0);
+    (!includeClips || preview.clips.count === 0) &&
+    !sfxWork;
 
   const handleConfirm = async () => {
     setDispatching(true);
