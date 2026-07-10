@@ -653,3 +653,39 @@ verdict MERGE READY). Recorded from per-task review minors + final triage:
   src/components/step-style.tsx:70 (react/no-unescaped-entities).
 
 **Tag:** quality, v4-p3
+
+## #23 — Clip Engine v2 final-review triage roll-up (2026-07-10)
+
+Non-blocking items from the feat/clip-engine-v2 per-task and final whole-branch
+reviews (MERGE READY at 5ccc341). None affect correctness of the shipped flows.
+
+- SFX DELETE can race an in-flight SFX POST: done written after reset leaves an
+  orphan clip-sfx.mp4 in R2 (narrow window; same idiom as other routes).
+- Clip POST has no in-flight guard (clipStatus === "generating" not rejected) —
+  a double-click can double-bill a clip; SFX POST has the guard, align them.
+- LTX est $0.36 assumes fal's default resolution is 1080p; buildInput sends no
+  explicit resolution field.
+- generateShotClip uploads main + tail image sequentially — Promise.all would
+  halve chained-clip upload latency.
+- Batch dialog never reports chains.applied (returned by the Inngest fn,
+  unconsumed) and the dispatch 202 omits the sfx count while its log includes it.
+- Presigned-URL churn on 5s batch polls restarts the unified-editor preview
+  video (pre-existing for clipUrl, now also sfxUrl).
+- chain-suggestion Haiku step is non-deterministic on a mid-step Inngest retry
+  (shared class with all AI steps in generate-batch); output is sanitized.
+- Inspector polish: chain checkbox checked-derivation diverges from DB truth
+  while disabled; sortedShots/nextShot recomputed per render; select/checkbox
+  a11y labels could be tighter.
+- generateBatchFn handler ~210 LOC (>150 guideline) — extract a wave-runner
+  helper when wave 5 arrives.
+- estimateBatchCost non-null assertion on the default registry lookup; clip
+  route types `model` as string not ClipModelId; route header cites LTX as the
+  example rather than the Kling default; Anthropic() instantiated per-call in
+  suggestChains vs module scope in suggest-motion.
+- Veo supportsEndFrame:false deserves a code comment (fal's veo3.1/fast i2v
+  endpoint takes no end frame; first-last-frame is a separate endpoint).
+- Env hazard (this machine, not code): iCloud Desktop sync evicts node_modules
+  files ("dataless"), hanging require/tsc/vitest — fix is rm + npm install of
+  the affected package (hit twice: @elevenlabs, @anthropic-ai/sdk).
+
+**Tag:** quality, clip-engine-v2
