@@ -66,6 +66,11 @@ export async function GET(_request: NextRequest, { params }: Params) {
       clipStatus: shot.clipStatus ?? "pending",
       clipUrl: shot.clipPath ? await getDownloadUrl(shot.clipPath) : null,
       clipDurationSeconds: shot.clipDurationSeconds,
+      clipModel: shot.clipModel,
+      chainToNext: shot.chainToNext,
+      sfxPath: shot.sfxPath,
+      sfxStatus: shot.sfxStatus ?? "pending",
+      sfxUrl: shot.sfxPath ? await getDownloadUrl(shot.sfxPath) : null,
       referencedEntityIds: shot.referencedEntityIds ?? [],
     })),
   );

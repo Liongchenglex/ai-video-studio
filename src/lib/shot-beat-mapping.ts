@@ -45,3 +45,45 @@ export function shotAbsoluteRange(
     end: anchor.startSeconds + shot.endInBeat,
   };
 }
+
+/**
+ * Deterministic timeline order for shots — the truthful "next shot" used by
+ * clip chaining (final-review finding #1). `sortOrder` alone is unreliable:
+ * the split route gives the right half `sortOrder + 1` without shifting
+ * later rows (so two shots can share a sortOrder), and create appends by
+ * count. The true order is: the anchor beat's position on the timeline
+ * (beat sortOrder — beats are renormalized so it's unique and reliable, no
+ * need to compute second-level offsets), then position within that beat
+ * (startInBeat). `sortOrder` and finally `id` only break exact ties (e.g.
+ * two shots at the identical beat + startInBeat).
+ *
+ * Shots whose beatId is null OR doesn't match any given beat (dangling
+ * reference) have no timeline position and sort AFTER every anchored shot,
+ * ordered among themselves by (sortOrder, id).
+ *
+ * Pure — does not mutate `shots`.
+ */
+export function orderShotsByTimeline<
+  T extends { id: string; beatId: string | null; startInBeat: number | null; sortOrder: number },
+>(shots: T[], beats: Array<{ id: string; sortOrder: number }>): T[] {
+  const beatSortOrderById = new Map(beats.map((b) => [b.id, b.sortOrder]));
+
+  const sortKey = (s: T): [number, number, number, string] => {
+    const beatSortOrder = s.beatId ? beatSortOrderById.get(s.beatId) : undefined;
+    if (beatSortOrder === undefined) {
+      // Unanchored/dangling — sorts after every anchored shot (Infinity),
+      // then by (sortOrder, id) among themselves.
+      return [Infinity, 0, s.sortOrder, s.id];
+    }
+    return [beatSortOrder, s.startInBeat ?? 0, s.sortOrder, s.id];
+  };
+
+  return [...shots].sort((a, b) => {
+    const [aBeat, aStart, aSort, aId] = sortKey(a);
+    const [bBeat, bStart, bSort, bId] = sortKey(b);
+    if (aBeat !== bBeat) return aBeat - bBeat;
+    if (aStart !== bStart) return aStart - bStart;
+    if (aSort !== bSort) return aSort - bSort;
+    return aId < bId ? -1 : aId > bId ? 1 : 0;
+  });
+}

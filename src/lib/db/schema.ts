@@ -193,6 +193,20 @@ export const shots = pgTable(
     clipStatus: generationStatusEnum("clip_status").default("pending"),
     clipDurationSeconds: integer("clip_duration_seconds"),
 
+    // ── Clip Engine v2 ──
+    // Model id from the clip-models registry used for the current clip;
+    // also the shot's sticky dropdown selection. Null = registry default.
+    clipModel: text("clip_model"),
+    // "This clip should end at the next shot's image" (first/last-frame
+    // conditioning). Honored only by models with supportsEndFrame.
+    chainToNext: boolean("chain_to_next").default(false).notNull(),
+
+    // ── SFX (Clip Engine v2) ──
+    // MMAudio variant (clip-sfx.mp4). Decoupled from clipStatus; reset
+    // whenever the clip itself is regenerated.
+    sfxPath: text("sfx_path"),
+    sfxStatus: generationStatusEnum("sfx_status").default("pending"),
+
     // ── v4.0: beat membership + sub-beat offsets ──
     // beatId is nullable during the additive migration; backfilled later.
     beatId: uuid("beat_id").references(() => beats.id, { onDelete: "cascade" }),

@@ -56,9 +56,19 @@ export interface EditorShot {
   clipStatus: string;
   clipUrl: string | null;
   clipDurationSeconds: number | null;
+  clipModel: string | null;
+  chainToNext: boolean;
+  sfxPath: string | null;
+  sfxStatus: string;
+  sfxUrl: string | null;
   // Reference Bible tagging (F-16) — populated server-side by page.tsx from
   // the DB column (which defaults to [] there too); always an array here.
   referencedEntityIds: string[];
+  // Client-only (final-review finding #3) — why a requested chain was
+  // skipped on the most recent clip generation. Never persisted: both
+  // server serializers (shots GET route, page.tsx) omit it, so it starts
+  // undefined on load and is only ever set from a generateClip response.
+  chainSkippedReason?: string | null;
 }
 
 export interface EditorEntity {
@@ -75,6 +85,7 @@ export interface GenerateAllPreview {
   sheets: { count: number; estUsd: number };
   images: { count: number; estUsd: number };
   clips: { count: number; estUsd: number };
+  sfx: { count: number; estUsd: number };
   totalUsd: number;
   totalWithClipsUsd: number;
   batchRunning: boolean;
@@ -219,13 +230,17 @@ interface EditorContextValue {
         | "imagePrompt"
         | "motionPrompt"
         | "referencedEntityIds"
+        | "clipModel"
+        | "chainToNext"
       >
     >,
   ): Promise<void>;
   deleteShot(shotId: string): Promise<void>;
   splitShot(shotId: string, atInBeat: number): Promise<void>;
   generateImage(shotId: string): Promise<void>;
-  generateClip(shotId: string, model?: "ltx" | "hailuo"): Promise<void>;
+  generateClip(shotId: string, model?: string): Promise<void>;
+  generateSfx(shotId: string, prompt?: string): Promise<void>;
+  removeSfx(shotId: string): Promise<void>;
   recommendShots(): Promise<void>;
   recommending: boolean;
   createEntity(
@@ -242,8 +257,16 @@ interface EditorContextValue {
   extractEntities(): Promise<{ created: number; taggedShots: number } | null>;
   extracting: boolean;
   tagShot(shotId: string, entityIds: string[]): Promise<void>;
-  fetchGenerateAllPreview(): Promise<GenerateAllPreview | null>;
-  generateAll(includeClips: boolean): Promise<boolean>;
+  fetchGenerateAllPreview(opts?: {
+    clipModel?: string;
+    includeSfx?: boolean;
+  }): Promise<GenerateAllPreview | null>;
+  generateAll(opts: {
+    includeClips: boolean;
+    clipModel?: string;
+    suggestChains?: boolean;
+    includeSfx?: boolean;
+  }): Promise<boolean>;
   batchActive: boolean;
 }
 
@@ -357,6 +380,8 @@ export function EditorProvider(props: {
           | "imagePrompt"
           | "motionPrompt"
           | "referencedEntityIds"
+          | "clipModel"
+          | "chainToNext"
         >
       >,
     ) => {
@@ -487,12 +512,19 @@ export function EditorProvider(props: {
   );
 
   const generateClip = useCallback(
-    async (shotId: string, model: "ltx" | "hailuo" = "ltx") => {
-      const endpoint = model === "hailuo" ? "clip-hailuo" : "clip";
-      dispatch({ type: "patchShot", shotId, patch: { clipStatus: "generating" } });
+    async (shotId: string, model?: string) => {
+      // Clear any stale reason from a previous generation — a fresh run
+      // may chain successfully, or fail differently.
+      dispatch({
+        type: "patchShot",
+        shotId,
+        patch: { clipStatus: "generating", chainSkippedReason: null },
+      });
       try {
-        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/${endpoint}`, {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/clip`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(model ? { model } : {}),
         });
         if (!res.ok) {
           console.warn("[editor-store] clip generation failed:", await res.text());
@@ -504,7 +536,12 @@ export function EditorProvider(props: {
           clipUrl: string;
           clipStatus: string;
           clipDurationSeconds: number;
+          clipModel: string;
+          chainSkippedReason?: string;
         };
+        if (data.chainSkippedReason) {
+          console.warn(`[editor-store] chain skipped: ${data.chainSkippedReason}`);
+        }
         dispatch({
           type: "patchShot",
           shotId,
@@ -513,11 +550,67 @@ export function EditorProvider(props: {
             clipUrl: data.clipUrl,
             clipStatus: "done",
             clipDurationSeconds: data.clipDurationSeconds,
+            clipModel: data.clipModel,
+            // A fresh clip invalidates any previous SFX (server did the same).
+            sfxPath: null,
+            sfxStatus: "pending",
+            sfxUrl: null,
+            chainSkippedReason: data.chainSkippedReason ?? null,
           },
         });
       } catch (err) {
         console.error("[editor-store] clip generation error:", err);
         dispatch({ type: "patchShot", shotId, patch: { clipStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const generateSfx = useCallback(
+    async (shotId: string, prompt?: string) => {
+      dispatch({ type: "patchShot", shotId, patch: { sfxStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/sfx`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(prompt?.trim() ? { prompt: prompt.trim() } : {}),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] sfx generation failed:", await res.text());
+          dispatch({ type: "patchShot", shotId, patch: { sfxStatus: "failed" } });
+          return;
+        }
+        const data = (await res.json()) as { sfxPath: string; sfxUrl: string };
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: { sfxPath: data.sfxPath, sfxUrl: data.sfxUrl, sfxStatus: "done" },
+        });
+      } catch (err) {
+        console.error("[editor-store] sfx generation error:", err);
+        dispatch({ type: "patchShot", shotId, patch: { sfxStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const removeSfx = useCallback(
+    async (shotId: string) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/sfx`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] sfx removal failed:", await res.text());
+          return;
+        }
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: { sfxPath: null, sfxUrl: null, sfxStatus: "pending" },
+        });
+      } catch (err) {
+        console.error("[editor-store] sfx removal error:", err);
       }
     },
     [projectId],
@@ -535,7 +628,7 @@ export function EditorProvider(props: {
       }
       const data = (await res.json()) as { shots: EditorShot[] };
       // The recommend response rows are raw DB fields — no presigned URLs.
-      const shots = data.shots.map((s) => ({ ...s, imageUrl: null, clipUrl: null }));
+      const shots = data.shots.map((s) => ({ ...s, imageUrl: null, clipUrl: null, sfxUrl: null }));
       dispatch({ type: "setShots", shots });
     } catch (err) {
       console.error("[editor-store] recommend shots fetch failed:", err);
@@ -709,25 +802,40 @@ export function EditorProvider(props: {
     [],
   );
 
-  const fetchGenerateAllPreview =
-    useCallback(async (): Promise<GenerateAllPreview | null> => {
+  const fetchGenerateAllPreview = useCallback(
+    async (opts?: {
+      clipModel?: string;
+      includeSfx?: boolean;
+    }): Promise<GenerateAllPreview | null> => {
       try {
-        const res = await fetch(`/api/projects/${projectId}/generate-all/preview`);
+        const qs = new URLSearchParams();
+        if (opts?.clipModel) qs.set("clipModel", opts.clipModel);
+        if (opts?.includeSfx) qs.set("includeSfx", "true");
+        const res = await fetch(
+          `/api/projects/${projectId}/generate-all/preview${qs.size ? `?${qs}` : ""}`,
+        );
         if (!res.ok) return null;
         return (await res.json()) as GenerateAllPreview;
       } catch (err) {
         console.error("[editor-store] preview fetch error:", err);
         return null;
       }
-    }, [projectId]);
+    },
+    [projectId],
+  );
 
   const generateAll = useCallback(
-    async (includeClips: boolean): Promise<boolean> => {
+    async (opts: {
+      includeClips: boolean;
+      clipModel?: string;
+      suggestChains?: boolean;
+      includeSfx?: boolean;
+    }): Promise<boolean> => {
       try {
         const res = await fetch(`/api/projects/${projectId}/generate-all`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ includeClips }),
+          body: JSON.stringify(opts),
         });
         if (!res.ok) {
           console.warn("[editor-store] generate-all dispatch failed:", await res.text());
@@ -799,6 +907,11 @@ export function EditorProvider(props: {
               clipPath: f.clipPath,
               clipUrl: f.clipUrl,
               clipDurationSeconds: f.clipDurationSeconds,
+              clipModel: f.clipModel,
+              chainToNext: f.chainToNext,
+              sfxPath: f.sfxPath,
+              sfxStatus: f.sfxStatus,
+              sfxUrl: f.sfxUrl,
             },
           });
         }
@@ -855,6 +968,8 @@ export function EditorProvider(props: {
     splitShot,
     generateImage,
     generateClip,
+    generateSfx,
+    removeSfx,
     recommendShots,
     recommending,
     createEntity,

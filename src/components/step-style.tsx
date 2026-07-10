@@ -67,7 +67,7 @@ export function StepStyle({
       <div>
         <h2 className="text-lg font-semibold mb-1">Visual style</h2>
         <p className="text-sm text-muted-foreground">
-          Upload reference images to define your video's look. Claude will analyse them and generate a style description.
+          Upload reference images to define your video&rsquo;s look. Claude will analyse them and generate a style description.
         </p>
       </div>
 

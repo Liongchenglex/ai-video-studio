@@ -482,14 +482,16 @@ function EditorShell({
   useEffect(() => {
     const v = previewVideoRef.current;
     if (!v) return;
-    if (!playheadShot?.clipUrl) {
+    const activeClipUrl = playheadShot?.sfxUrl ?? playheadShot?.clipUrl ?? null;
+    if (!playheadShot || !activeClipUrl) {
       v.pause();
       v.removeAttribute("src");
       v.load();
       return;
     }
-    if (!v.src.endsWith(encodeURI(playheadShot.clipUrl)) && v.src !== playheadShot.clipUrl) {
-      v.src = playheadShot.clipUrl;
+    if (!v.src.endsWith(encodeURI(activeClipUrl)) && v.src !== activeClipUrl) {
+      v.muted = !playheadShot?.sfxUrl;
+      v.src = activeClipUrl;
       v.load();
     }
     const range = absoluteShotRange(playheadShot, beats);
@@ -499,13 +501,14 @@ function EditorShell({
     // `view` is a dependency because the <video> element unmounts in the
     // storyboard view — returning to the timeline must re-sync the source.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playheadShot?.id, playheadShot?.clipUrl, view]);
+  }, [playheadShot?.id, playheadShot?.clipUrl, playheadShot?.sfxUrl, view]);
 
   // Sync the video element when play/pause toggles.
   useEffect(() => {
     const v = previewVideoRef.current;
     if (!v) return;
-    if (playing && playheadShot?.clipUrl) v.play().catch(() => {});
+    const activeClipUrl = playheadShot?.sfxUrl ?? playheadShot?.clipUrl ?? null;
+    if (playing && activeClipUrl) v.play().catch(() => {});
     else v.pause();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing]);
@@ -514,7 +517,8 @@ function EditorShell({
   useEffect(() => {
     if (playing) return;
     const v = previewVideoRef.current;
-    if (!v || !playheadShot?.clipUrl) return;
+    const activeClipUrl = playheadShot?.sfxUrl ?? playheadShot?.clipUrl ?? null;
+    if (!v || !playheadShot || !activeClipUrl) return;
     const range = absoluteShotRange(playheadShot, beats);
     const localTime = Math.max(0, playheadSeconds - (range?.start ?? 0));
     if (Math.abs(v.currentTime - localTime) > 0.2) v.currentTime = localTime;

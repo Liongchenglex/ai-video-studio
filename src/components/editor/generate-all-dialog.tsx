@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useEditor, type GenerateAllPreview } from "@/components/editor/editor-store";
+import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, getClipModel } from "@/lib/clip-models";
 
 export function GenerateAllDialog({
   open,
@@ -31,33 +32,54 @@ export function GenerateAllDialog({
   const [preview, setPreview] = useState<GenerateAllPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [includeClips, setIncludeClips] = useState(false);
+  const [clipModel, setClipModel] = useState<string>(DEFAULT_CLIP_MODEL_ID);
+  const [suggestChains, setSuggestChains] = useState(true);
+  // Chaining needs an end-frame-capable model — mirrors the orchestrator's
+  // gate (generate-batch.ts) so the dialog never promises chaining the
+  // batch can't actually do (final-review finding #2).
+  const chainsUnsupported = !(getClipModel(clipModel)?.supportsEndFrame ?? false);
+  const effectiveSuggestChains = suggestChains && !chainsUnsupported;
+  const [includeSfx, setIncludeSfx] = useState(false);
   const [dispatching, setDispatching] = useState(false);
   const [error, setError] = useState(false);
 
+  // Reset only on open — keep separate from the refetch effect below so
+  // toggling model/SFX doesn't clobber the clips checkbox.
   useEffect(() => {
     if (!open) return;
     setPreview(null);
-    setError(false);
     setIncludeClips(false);
+    setIncludeSfx(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setError(false);
     setLoading(true);
-    fetchGenerateAllPreview()
+    fetchGenerateAllPreview({ clipModel, includeSfx })
       .then((p) => {
         setPreview(p);
         if (!p) setError(true);
       })
       .finally(() => setLoading(false));
-  }, [open, fetchGenerateAllPreview]);
+  }, [open, clipModel, includeSfx, fetchGenerateAllPreview]);
 
+  // An SFX pass over already-done clips is real work even when nothing else is.
+  const sfxWork = includeClips && includeSfx && preview !== null && preview.sfx.count > 0;
   const nothingToDo =
     preview !== null &&
     preview.sheets.count === 0 &&
     preview.images.count === 0 &&
-    (!includeClips || preview.clips.count === 0);
+    (!includeClips || preview.clips.count === 0) &&
+    !sfxWork;
 
   const handleConfirm = async () => {
     setDispatching(true);
     setError(false);
-    const ok = await generateAll(includeClips);
+    const ok = await generateAll({
+      includeClips,
+      ...(includeClips ? { clipModel, suggestChains: effectiveSuggestChains, includeSfx } : {}),
+    });
     setDispatching(false);
     if (ok) onOpenChange(false);
     else setError(true);
@@ -102,7 +124,7 @@ export function GenerateAllDialog({
                   type="checkbox"
                   checked={includeClips}
                   onChange={(e) => setIncludeClips(e.target.checked)}
-                  disabled={preview.clips.count === 0}
+                  disabled={preview.clips.count === 0 && preview.sfx.count === 0}
                 />
                 Also generate {preview.clips.count} clips
               </span>
@@ -110,6 +132,50 @@ export function GenerateAllDialog({
                 {includeClips ? `~$${preview.clips.estUsd.toFixed(2)}` : "—"}
               </span>
             </label>
+            {includeClips && (
+              <div className="space-y-2 pl-6">
+                <select
+                  value={clipModel}
+                  onChange={(e) => setClipModel(e.target.value)}
+                  className="w-full rounded border bg-background p-1.5 text-xs"
+                >
+                  {CLIP_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} — ~${m.estUsdPerClip.toFixed(2)}/clip
+                    </option>
+                  ))}
+                </select>
+                <label
+                  className="flex items-center gap-2 text-xs"
+                  title={
+                    chainsUnsupported
+                      ? "The selected model can't take an end frame, so it can't chain"
+                      : undefined
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={suggestChains && !chainsUnsupported}
+                    disabled={chainsUnsupported}
+                    onChange={(e) => setSuggestChains(e.target.checked)}
+                  />
+                  Suggest chained shots (AI)
+                </label>
+                <label className="flex items-center justify-between gap-2 text-xs">
+                  <span className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={includeSfx}
+                      onChange={(e) => setIncludeSfx(e.target.checked)}
+                    />
+                    Add SFX to all clips ({preview.sfx.count})
+                  </span>
+                  <span className="font-mono">
+                    {includeSfx ? `~$${preview.sfx.estUsd.toFixed(2)}` : "—"}
+                  </span>
+                </label>
+              </div>
+            )}
             <div className="flex justify-between border-t pt-2 font-medium">
               <span>Total (estimate)</span>
               <span className="font-mono">

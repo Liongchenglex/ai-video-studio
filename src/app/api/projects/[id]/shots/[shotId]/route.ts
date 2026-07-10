@@ -1,6 +1,6 @@
 /**
- * PATCH  /api/projects/[id]/shots/[shotId] — update bounds, prompts, and/or
- *        the tagged reference-bible entities
+ * PATCH  /api/projects/[id]/shots/[shotId] — update bounds, prompts, the
+ *        tagged reference-bible entities, clip model, and/or chain-to-next
  * DELETE /api/projects/[id]/shots/[shotId] — remove a shot
  *
  * PATCH validates bounds against the anchor-beat spillover model: the shot
@@ -10,6 +10,12 @@
  * `referencedEntityIds` (Reference Bible tagging, F-16) is validated
  * independently of bounds/prompts: at most 8 UUIDs, every id must belong to
  * an entity in this same project (cross-table authorization).
+ *
+ * `chainToNext` (boolean) enables or disables video-to-video chaining to the
+ * next shot (only when using a model that supports end-frame input).
+ *
+ * `clipModel` (ClipModelId | null) selects which fal.ai model to use, or null
+ * to reset to the registry default (Clip Engine v2).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -26,6 +32,7 @@ import {
 } from "@/lib/api-utils";
 import { MIN_SHOT_SECONDS, shotAbsoluteRange } from "@/lib/shot-beat-mapping";
 import { computeBeatOffsets, totalDurationSeconds } from "@/lib/beat-timing";
+import { isClipModelId } from "@/lib/clip-models";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
 
@@ -77,6 +84,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     imagePrompt: string;
     motionPrompt: string;
     referencedEntityIds: string[];
+    chainToNext: boolean;
+    clipModel: string | null;
   }>;
 
   const updates: Record<string, unknown> = {};
@@ -179,6 +188,21 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
     }
     updates.referencedEntityIds = ids;
+  }
+
+  if (body.chainToNext !== undefined) {
+    if (typeof body.chainToNext !== "boolean") {
+      return badRequestResponse("chainToNext must be a boolean");
+    }
+    updates.chainToNext = body.chainToNext;
+  }
+
+  if (body.clipModel !== undefined) {
+    // null clears the selection back to the registry default
+    if (body.clipModel !== null && !isClipModelId(body.clipModel)) {
+      return badRequestResponse("Unknown clip model");
+    }
+    updates.clipModel = body.clipModel;
   }
 
   if (Object.keys(updates).length === 0) {
