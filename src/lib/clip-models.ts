@@ -7,21 +7,16 @@
  * be resolved through getClipModel/isClipModelId — never passed to fal raw.
  */
 
-export type ClipModelId = "ltx-2.3" | "kling-2.5-turbo-pro" | "veo-3.1-fast";
+export type ClipModelId =
+  | "ltx-2.3"
+  | "kling-2.5-turbo-pro"
+  | "kling-v3-pro"
+  | "veo-3.1-fast";
 
-// TODO(directing-controls task 2): clip-camera.ts will own these two types;
-// this task defines them locally to stay self-contained, then Task 2 switches
-// this file to `import type { CameraMove, CameraStrength } from "@/lib/clip-camera"`.
-export type CameraMove =
-  | "static"
-  | "push-in"
-  | "pull-back"
-  | "pan-left"
-  | "pan-right"
-  | "tilt-up"
-  | "tilt-down"
-  | "orbit";
-export type CameraStrength = "subtle" | "medium" | "strong";
+// Camera vocabulary lives in clip-camera.ts; re-exported here so existing
+// importers of clip-models.ts keep working unchanged.
+import type { CameraMove, CameraStrength } from "@/lib/clip-camera";
+export type { CameraMove, CameraStrength };
 
 export interface ClipModelSpec {
   id: ClipModelId;
@@ -52,12 +47,54 @@ export interface ClipModelSpec {
   }): Record<string, unknown>;
 }
 
-export const DEFAULT_CLIP_MODEL_ID: ClipModelId = "kling-2.5-turbo-pro";
+export const DEFAULT_CLIP_MODEL_ID: ClipModelId = "kling-v3-pro";
 
 /** Display-only ballpark for one MMAudio v2 SFX pass (priced ~$0.001/s). */
 export const SFX_EST_USD = 0.01;
 
 export const CLIP_MODELS: ClipModelSpec[] = [
+  {
+    id: "kling-v3-pro",
+    label: "Kling v3 Pro",
+    falEndpoint: "fal-ai/kling-video/v3/pro/image-to-video",
+    durationSeconds: 5,
+    durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    supportsEndFrame: true,
+    nativeAudio: false,
+    // Verified fal pricing (audio off, since generate_audio is forced false
+    // below): $0.112/s. (Audio-on tier is $0.168/s but unused here.)
+    estUsdPerSecond: 0.112,
+    // Verified against fal's v3/pro and v2.6/pro image-to-video schemas
+    // (directing-controls task 2): no camera_control param on either i2v
+    // endpoint, so camera direction stays prompt-fallback for all Kling tiers.
+    supportsCameraControl: false,
+    supportsReferences: true,
+    supportsNegativePrompt: true,
+    whenToUse:
+      "New default. Full directing surface: chaining, cast references, negative prompt, 3–15s. Tradeoff: pricier per second than Kling 2.5; no native audio (use Add SFX).",
+    buildInput: ({
+      imageUrl,
+      prompt,
+      tailImageUrl,
+      negativePrompt,
+      durationSeconds,
+      referenceImageUrls,
+    }) => ({
+      start_image_url: imageUrl,
+      prompt,
+      duration: String(durationSeconds ?? 5),
+      // fal's v3 endpoint defaults generate_audio to true; force it off — the
+      // MMAudio SFX flow owns audio, we don't want an embedded soundtrack.
+      generate_audio: false,
+      ...(tailImageUrl ? { end_image_url: tailImageUrl } : {}),
+      ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+      // Cast references map 1:1 to fal's `elements` list; each url is a
+      // character/object's frontal image (no secondary angles supported yet).
+      ...(referenceImageUrls?.length
+        ? { elements: referenceImageUrls.map((url) => ({ frontal_image_url: url })) }
+        : {}),
+    }),
+  },
   {
     id: "kling-2.5-turbo-pro",
     label: "Kling 2.5 Turbo Pro",
@@ -67,13 +104,14 @@ export const CLIP_MODELS: ClipModelSpec[] = [
     supportsEndFrame: true,
     nativeAudio: false,
     estUsdPerSecond: 0.084,
-    // Only the 2.6+ endpoints take camera params; this is the 2.5 endpoint,
-    // verified false here — Task 2 flips this on the 2.6+ entries it adds.
+    // Verified against fal's v2.5-turbo/pro and v2.6/pro image-to-video
+    // schemas (directing-controls task 2): neither exposes a hard
+    // camera_control param on the i2v endpoint, so this stays prompt-fallback.
     supportsCameraControl: false,
     supportsReferences: false,
     supportsNegativePrompt: true,
     whenToUse:
-      "Default. Balanced cost vs. quality: strong, stable motion and the best chaining. Tradeoff: 5s max per clip, no sound of its own (use Add SFX).",
+      "Cheaper alternative to the default: strong, stable motion and the best chaining. Tradeoff: 5s max per clip (10s optional), no sound of its own (use Add SFX).",
     buildInput: ({ imageUrl, prompt, tailImageUrl, negativePrompt, durationSeconds }) => ({
       image_url: imageUrl,
       prompt,

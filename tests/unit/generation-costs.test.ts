@@ -11,11 +11,11 @@ describe("estimateBatchCost", () => {
 
   it("prices clips by the default model when no model given", () => {
     const c = estimateBatchCost(counts);
-    expect(c.clipsUsd).toBe(4.2); // 10 × $0.42 Kling default
+    expect(c.clipsUsd).toBe(5.6); // 10 × $0.56 Kling v3 Pro default (5s × $0.112/s)
     expect(c.sheetsUsd).toBe(0.08);
     expect(c.imagesUsd).toBe(0.4);
     expect(c.totalUsd).toBe(0.48); // sheets + images only (unchanged behavior)
-    expect(c.totalWithClipsUsd).toBe(4.68);
+    expect(c.totalWithClipsUsd).toBe(6.08);
     expect(c.sfxUsd).toBe(0);
   });
 
@@ -25,13 +25,13 @@ describe("estimateBatchCost", () => {
   });
 
   it("falls back to the default model for unknown ids", () => {
-    expect(estimateBatchCost(counts, { clipModelId: "nope" }).clipsUsd).toBe(4.2);
+    expect(estimateBatchCost(counts, { clipModelId: "nope" }).clipsUsd).toBe(5.6);
   });
 
   it("adds SFX per clip when included", () => {
     const c = estimateBatchCost(counts, { includeSfx: true });
     expect(c.sfxUsd).toBe(0.1); // 10 × $0.01 (sfx omitted falls back to clips)
-    expect(c.totalWithClipsUsd).toBe(4.78);
+    expect(c.totalWithClipsUsd).toBe(6.18);
   });
 
   it("prices SFX by the explicit sfx count when given", () => {

@@ -11,8 +11,8 @@ import {
 } from "@/lib/clip-models";
 
 describe("clip model registry", () => {
-  it("defaults to Kling 2.5 Turbo Pro", () => {
-    expect(DEFAULT_CLIP_MODEL_ID).toBe("kling-2.5-turbo-pro");
+  it("defaults to Kling v3 Pro", () => {
+    expect(DEFAULT_CLIP_MODEL_ID).toBe("kling-v3-pro");
     expect(getClipModel(DEFAULT_CLIP_MODEL_ID)?.supportsEndFrame).toBe(true);
   });
 
@@ -96,6 +96,48 @@ describe("clip model registry", () => {
       image_url: "a",
       prompt: "p",
       duration: "5",
+    });
+  });
+
+  it("Kling v3 Pro is the default and maps the full directing surface", () => {
+    expect(DEFAULT_CLIP_MODEL_ID).toBe("kling-v3-pro");
+    const v3 = getClipModel("kling-v3-pro")!;
+    expect(v3.falEndpoint).toBe("fal-ai/kling-video/v3/pro/image-to-video");
+    expect(v3.supportsEndFrame).toBe(true);
+    expect(v3.supportsReferences).toBe(true);
+    expect(v3.supportsNegativePrompt).toBe(true);
+    expect(v3.supportsCameraControl).toBe(false);
+    expect(v3.nativeAudio).toBe(false);
+    expect(v3.durations).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const input = v3.buildInput({
+      imageUrl: "a",
+      prompt: "p",
+      tailImageUrl: "b",
+      negativePrompt: "blur",
+      durationSeconds: 4,
+      referenceImageUrls: ["r1", "r2"],
+    });
+    // duration is fal's string-encoded enum ("3".."15"); elements is a list of
+    // KlingV3ComboElementInput objects keyed by frontal_image_url (verified
+    // via fal's v3 pro i2v schema — see task-2-report.md).
+    expect(input).toEqual({
+      start_image_url: "a",
+      end_image_url: "b",
+      prompt: "p",
+      negative_prompt: "blur",
+      duration: "4",
+      generate_audio: false,
+      elements: [{ frontal_image_url: "r1" }, { frontal_image_url: "r2" }],
+    });
+  });
+
+  it("Kling v3 Pro buildInput omits optional fields and forces audio off by default", () => {
+    const v3 = getClipModel("kling-v3-pro")!;
+    expect(v3.buildInput({ imageUrl: "a", prompt: "p" })).toEqual({
+      start_image_url: "a",
+      prompt: "p",
+      duration: "5",
+      generate_audio: false,
     });
   });
 });
