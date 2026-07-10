@@ -4,7 +4,7 @@
  * ballparks for the cost-preview dialog — the UI must label them as
  * estimates. Clip cost comes from the selected model's registry entry.
  */
-import { getClipModel, DEFAULT_CLIP_MODEL_ID, SFX_EST_USD } from "@/lib/clip-models";
+import { estClipUsd, getClipModel, DEFAULT_CLIP_MODEL_ID, SFX_EST_USD } from "@/lib/clip-models";
 
 export const SHEET_EST_USD = 0.04;
 export const IMAGE_EST_USD = 0.04;
@@ -20,7 +20,7 @@ export function estimateBatchCost(
   const clipModel = getClipModel(opts?.clipModelId) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
   const sheetsUsd = round2(counts.sheets * SHEET_EST_USD);
   const imagesUsd = round2(counts.images * IMAGE_EST_USD);
-  const clipsUsd = round2(counts.clips * clipModel.estUsdPerClip);
+  const clipsUsd = round2(counts.clips * estClipUsd(clipModel));
   // sfx count may exceed clips: already-done clips missing SFX are targeted too.
   const sfxUsd = opts?.includeSfx ? round2((counts.sfx ?? counts.clips) * SFX_EST_USD) : 0;
   return {

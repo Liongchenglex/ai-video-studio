@@ -39,7 +39,7 @@ import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { VoiceSelector } from "@/components/voice-selector";
-import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, getClipModel } from "@/lib/clip-models";
+import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, estClipUsd, getClipModel } from "@/lib/clip-models";
 import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
 import {
   useEditor,
@@ -738,7 +738,7 @@ function ShotEditPanel({
           title={
             !shot.imagePath
               ? "Generate image first"
-              : `${shot.clipPath ? "Regenerate" : "Generate"} clip with ${selectedModel.label} (~$${selectedModel.estUsdPerClip.toFixed(2)})`
+              : `${shot.clipPath ? "Regenerate" : "Generate"} clip with ${selectedModel.label} (~$${estClipUsd(selectedModel).toFixed(2)})`
           }
         >
           {shot.clipStatus === "generating" ? (
@@ -766,7 +766,7 @@ function ShotEditPanel({
         >
           {CLIP_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.label} — ~${m.estUsdPerClip.toFixed(2)}
+              {m.label} — ~${estClipUsd(m).toFixed(2)}
               {m.supportsEndFrame ? " · chains" : ""}
               {m.nativeAudio ? " · audio" : ""}
             </option>
