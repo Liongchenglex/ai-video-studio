@@ -23,8 +23,20 @@ interface ChainShotInput {
   referencedEntityIds: string[] | null;
 }
 
+/**
+ * Builds adjacent-pair chain candidates from `shots`.
+ *
+ * REQUIRES `shots` to already be in true timeline order (see
+ * `orderShotsByTimeline` in shot-beat-mapping.ts) — this function no longer
+ * sorts internally. It used to sort by `sortOrder`, but that column goes
+ * stale (the split route duplicates it; create appends by count), so a
+ * previous adjacent pair could silently point at the wrong "next" shot.
+ * Callers (the batch orchestrator) must fetch the project's beats and call
+ * orderShotsByTimeline before calling this. Passing unordered input is a
+ * caller bug — pairs will simply follow the input array's order.
+ */
 export function buildChainPairs(shots: ChainShotInput[]): ChainPair[] {
-  const ordered = [...shots].sort((a, b) => a.sortOrder - b.sortOrder);
+  const ordered = shots;
   const pairs: ChainPair[] = [];
   for (let i = 0; i < ordered.length - 1; i++) {
     const cur = ordered[i];

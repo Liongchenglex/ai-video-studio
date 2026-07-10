@@ -9,10 +9,16 @@
  * failed. Regenerating a clip resets any SFX variant — the old audio no
  * longer matches. Caller must ensure shot.imagePath is set. Called by
  * POST /shots/[shotId]/clip AND the batch orchestrator.
+ *
+ * "Next shot" is resolved by TRUE TIMELINE ORDER (orderShotsByTimeline),
+ * not the shots.sortOrder column — sortOrder goes stale after a split (the
+ * right half gets sortOrder+1 without shifting later rows) and after create
+ * (appends by count), so a naive `gt(sortOrder)` query can pick the wrong
+ * shot or miss the real next one entirely.
  */
 import { db } from "@/lib/db";
-import { shots, type Project, type Shot } from "@/lib/db/schema";
-import { eq, and, gt, asc } from "drizzle-orm";
+import { shots, beats, type Project, type Shot } from "@/lib/db/schema";
+import { eq, asc } from "drizzle-orm";
 import { fal } from "@fal-ai/client";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, getDownloadUrl } from "@/lib/r2";
@@ -23,6 +29,7 @@ import {
   type ClipModelId,
 } from "@/lib/clip-models";
 import { resolveChainDecision, type ChainSkipReason } from "@/lib/clip-chaining";
+import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
@@ -49,12 +56,25 @@ export async function generateShotClip(
       `[shot-clip] project=${project.id} shot=${shot.id} model=${spec.id} | motion: ${shot.motionPrompt.substring(0, 120)}...`,
     );
 
-    const [nextShot] = await db
-      .select({ imagePath: shots.imagePath, imageStatus: shots.imageStatus })
+    const projectBeats = await db
+      .select({ id: beats.id, sortOrder: beats.sortOrder })
+      .from(beats)
+      .where(eq(beats.projectId, project.id))
+      .orderBy(asc(beats.sortOrder));
+    const projectShots = await db
+      .select({
+        id: shots.id,
+        beatId: shots.beatId,
+        startInBeat: shots.startInBeat,
+        sortOrder: shots.sortOrder,
+        imagePath: shots.imagePath,
+        imageStatus: shots.imageStatus,
+      })
       .from(shots)
-      .where(and(eq(shots.projectId, project.id), gt(shots.sortOrder, shot.sortOrder)))
-      .orderBy(asc(shots.sortOrder))
-      .limit(1);
+      .where(eq(shots.projectId, project.id));
+    const ordered = orderShotsByTimeline(projectShots, projectBeats);
+    const currentIndex = ordered.findIndex((s) => s.id === shot.id);
+    const nextShot = currentIndex >= 0 ? (ordered[currentIndex + 1] ?? null) : null;
 
     const chain = resolveChainDecision({
       chainToNext: shot.chainToNext,

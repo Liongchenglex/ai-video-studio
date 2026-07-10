@@ -40,6 +40,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { VoiceSelector } from "@/components/voice-selector";
 import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, getClipModel } from "@/lib/clip-models";
+import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
 import {
   useEditor,
   absoluteShotRange,
@@ -55,6 +56,15 @@ const ENTITY_TYPE_ICON: Record<EditorEntity["type"], LucideIcon> = {
   character: User,
   location: Mountain,
   object: Box,
+};
+
+// Copy for a skipped chain (final-review finding #3). "not-requested" is
+// omitted on purpose — the note only renders when shot.chainToNext is true,
+// so a request that was never made can never surface here.
+const CHAIN_SKIPPED_COPY: Record<string, string> = {
+  "model-no-end-frame": "Chain skipped — this model can't take an end frame",
+  "no-next-shot": "Chain skipped — no next shot",
+  "next-image-not-ready": "Chain skipped — the next shot's image wasn't ready",
 };
 
 const MIN_HALF = 0.25; // seconds — mirror the server split guard
@@ -341,8 +351,15 @@ function ShotEditPanel({
   const [clipModelId, setClipModelId] = useState(shot.clipModel ?? DEFAULT_CLIP_MODEL_ID);
   const [sfxPrompt, setSfxPrompt] = useState("");
   const selectedModel = getClipModel(clipModelId) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
-  const sortedShots = [...shots].sort((a, b) => a.sortOrder - b.sortOrder);
-  const nextShot = sortedShots[sortedShots.findIndex((s) => s.id === shot.id) + 1] ?? null;
+  // Timeline order, not sortOrder (final-review finding #1) — EditorBeat
+  // already carries `sortOrder` (its position on the timeline; the reducer
+  // keeps beats sorted by it), so it mirrors orderShotsByTimeline's beat
+  // ranking exactly. Must match shot-clip-generation.ts's server-side
+  // resolution of "next shot" or the preview here can lie about what the
+  // clip actually chains onto.
+  const timelineOrderedShots = orderShotsByTimeline(shots, beats);
+  const nextShot =
+    timelineOrderedShots[timelineOrderedShots.findIndex((s) => s.id === shot.id) + 1] ?? null;
   const chainDisabledReason = !selectedModel.supportsEndFrame
     ? `${selectedModel.label} can't take an end frame — pick a model marked "chains"`
     : !nextShot
@@ -776,6 +793,12 @@ function ShotEditPanel({
         </label>
         {chainDisabledReason && (
           <p className="text-[10px] text-muted-foreground">{chainDisabledReason}</p>
+        )}
+        {shot.chainToNext && shot.chainSkippedReason && (
+          <p className="text-[10px] text-amber-600">
+            {CHAIN_SKIPPED_COPY[shot.chainSkippedReason] ??
+              `Chain skipped — ${shot.chainSkippedReason}`}
+          </p>
         )}
       </div>
 

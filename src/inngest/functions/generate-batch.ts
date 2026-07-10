@@ -3,9 +3,13 @@
  * Clip Engine v2). Four sequential waves over missing-only targets —
  * 1) reference sheets for tagged entities, 2) shot images (entity-conditioned
  * via the shared service), 2.5) optional AI chain suggestions (flags shots
- * whose clip should end on the next shot's still), 3) clips (only when
- * includeClips, only for shots whose image is done, threading the selected
- * clip model), 4) optional SFX for shots whose clip just finished. Each item
+ * whose clip should end on the next shot's still — gated on includeClips,
+ * the suggestChains flag, the selected model supporting end frames, and
+ * this run actually having clip targets, so it never fires a paid Haiku
+ * call or flips chainToNext when chaining couldn't affect this run),
+ * 3) clips (only when includeClips, only for shots whose image is done,
+ * threading the selected clip model), 4) optional SFX for shots whose clip
+ * just finished. Each item
  * is one step that flips the row's own status column; a failed item marks
  * its row `failed` and NEVER halts the batch (re-running Generate all is the
  * retry). Paid work runs in chunks of 3 to bound concurrent fal.ai calls.
@@ -13,14 +17,16 @@
  */
 import { inngest } from "../client";
 import { db } from "@/lib/db";
-import { projects, entities, shots } from "@/lib/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { projects, entities, shots, beats } from "@/lib/db/schema";
+import { eq, and, inArray, asc } from "drizzle-orm";
 import { computeBatchTargets } from "@/lib/batch-targeting";
 import { generateEntitySheet } from "@/lib/entity-sheet-generation";
 import { generateShotImage } from "@/lib/shot-image-generation";
 import { generateShotClip } from "@/lib/shot-clip-generation";
 import { suggestChains } from "@/lib/chain-suggestion";
 import { generateShotSfx } from "@/lib/sfx-generation";
+import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
+import { getClipModel, DEFAULT_CLIP_MODEL_ID } from "@/lib/clip-models";
 
 const CHUNK_SIZE = 3;
 
@@ -127,25 +133,44 @@ export const generateBatchFn = inngest.createFunction(
     }
 
     // ── Chain suggestions (optional, before clips) ──
+    // Gated on the selected model actually supporting end frames AND this
+    // run having clip targets — otherwise chaining can't affect anything
+    // this run, so skip the paid Haiku call and the project-wide flag
+    // flips it would otherwise make (final-review finding #2).
+    const clipModelSpec = getClipModel(clipModel) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
     let chainsApplied = 0;
-    if (includeClips && suggestChainsFlag) {
+    if (
+      includeClips &&
+      suggestChainsFlag &&
+      clipModelSpec.supportsEndFrame &&
+      targets.clipShotIds.length > 0
+    ) {
       chainsApplied = await step.run("suggest-chains", async () => {
         const [project] = await db
           .select({ brief: projects.brief })
           .from(projects)
           .where(eq(projects.id, projectId))
           .limit(1);
+        const beatRows = await db
+          .select({ id: beats.id, sortOrder: beats.sortOrder })
+          .from(beats)
+          .where(eq(beats.projectId, projectId))
+          .orderBy(asc(beats.sortOrder));
         const shotRows = await db
           .select({
             id: shots.id,
             sortOrder: shots.sortOrder,
             beatId: shots.beatId,
+            startInBeat: shots.startInBeat,
             imagePrompt: shots.imagePrompt,
             referencedEntityIds: shots.referencedEntityIds,
           })
           .from(shots)
           .where(eq(shots.projectId, projectId));
-        const ids = await suggestChains(shotRows, project?.brief ?? null);
+        // buildChainPairs (via suggestChains) now requires timeline-ordered
+        // input — sortOrder alone is unreliable (final-review finding #1).
+        const orderedShotRows = orderShotsByTimeline(shotRows, beatRows);
+        const ids = await suggestChains(orderedShotRows, project?.brief ?? null);
         if (ids.length > 0) {
           await db.update(shots).set({ chainToNext: true }).where(inArray(shots.id, ids));
         }

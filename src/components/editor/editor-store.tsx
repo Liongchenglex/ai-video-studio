@@ -64,6 +64,11 @@ export interface EditorShot {
   // Reference Bible tagging (F-16) — populated server-side by page.tsx from
   // the DB column (which defaults to [] there too); always an array here.
   referencedEntityIds: string[];
+  // Client-only (final-review finding #3) — why a requested chain was
+  // skipped on the most recent clip generation. Never persisted: both
+  // server serializers (shots GET route, page.tsx) omit it, so it starts
+  // undefined on load and is only ever set from a generateClip response.
+  chainSkippedReason?: string | null;
 }
 
 export interface EditorEntity {
@@ -508,7 +513,13 @@ export function EditorProvider(props: {
 
   const generateClip = useCallback(
     async (shotId: string, model?: string) => {
-      dispatch({ type: "patchShot", shotId, patch: { clipStatus: "generating" } });
+      // Clear any stale reason from a previous generation — a fresh run
+      // may chain successfully, or fail differently.
+      dispatch({
+        type: "patchShot",
+        shotId,
+        patch: { clipStatus: "generating", chainSkippedReason: null },
+      });
       try {
         const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/clip`, {
           method: "POST",
@@ -544,6 +555,7 @@ export function EditorProvider(props: {
             sfxPath: null,
             sfxStatus: "pending",
             sfxUrl: null,
+            chainSkippedReason: data.chainSkippedReason ?? null,
           },
         });
       } catch (err) {

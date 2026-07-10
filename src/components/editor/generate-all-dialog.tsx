@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useEditor, type GenerateAllPreview } from "@/components/editor/editor-store";
-import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID } from "@/lib/clip-models";
+import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, getClipModel } from "@/lib/clip-models";
 
 export function GenerateAllDialog({
   open,
@@ -34,6 +34,11 @@ export function GenerateAllDialog({
   const [includeClips, setIncludeClips] = useState(false);
   const [clipModel, setClipModel] = useState<string>(DEFAULT_CLIP_MODEL_ID);
   const [suggestChains, setSuggestChains] = useState(true);
+  // Chaining needs an end-frame-capable model — mirrors the orchestrator's
+  // gate (generate-batch.ts) so the dialog never promises chaining the
+  // batch can't actually do (final-review finding #2).
+  const chainsUnsupported = !(getClipModel(clipModel)?.supportsEndFrame ?? false);
+  const effectiveSuggestChains = suggestChains && !chainsUnsupported;
   const [includeSfx, setIncludeSfx] = useState(false);
   const [dispatching, setDispatching] = useState(false);
   const [error, setError] = useState(false);
@@ -73,7 +78,7 @@ export function GenerateAllDialog({
     setError(false);
     const ok = await generateAll({
       includeClips,
-      ...(includeClips ? { clipModel, suggestChains, includeSfx } : {}),
+      ...(includeClips ? { clipModel, suggestChains: effectiveSuggestChains, includeSfx } : {}),
     });
     setDispatching(false);
     if (ok) onOpenChange(false);
@@ -140,13 +145,21 @@ export function GenerateAllDialog({
                     </option>
                   ))}
                 </select>
-                <label className="flex items-center gap-2 text-xs">
+                <label
+                  className="flex items-center gap-2 text-xs"
+                  title={
+                    chainsUnsupported
+                      ? "The selected model can't take an end frame, so it can't chain"
+                      : undefined
+                  }
+                >
                   <input
                     type="checkbox"
-                    checked={suggestChains}
+                    checked={suggestChains && !chainsUnsupported}
+                    disabled={chainsUnsupported}
                     onChange={(e) => setSuggestChains(e.target.checked)}
                   />
-                  Let AI suggest chained shots (seamless cuts, models that support it)
+                  Suggest chained shots (AI)
                 </label>
                 <label className="flex items-center justify-between gap-2 text-xs">
                   <span className="flex items-center gap-2">
