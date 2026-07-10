@@ -1,3 +1,9 @@
+/**
+ * Unit tests for the pure chain-suggestion helpers: buildChainPairs
+ * (adjacent-pair construction with beat/entity context) and
+ * sanitizeChainSuggestions (model-output allow-listing). The network-bound
+ * suggestChains is not unit-tested; its error path returns [].
+ */
 import { describe, it, expect } from "vitest";
 import { buildChainPairs, sanitizeChainSuggestions } from "@/lib/chain-suggestion";
 
