@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { estimateBatchCost } from "@/lib/generation-costs";
+import { getClipModel } from "@/lib/clip-models";
 
 describe("estimateBatchCost", () => {
   const counts = { sheets: 2, images: 10, clips: 10 };
@@ -37,5 +38,12 @@ describe("estimateBatchCost", () => {
   it("prices SFX by the explicit sfx count when given", () => {
     const c = estimateBatchCost({ ...counts, sfx: 14 }, { includeSfx: true });
     expect(c.sfxUsd).toBe(0.14); // 14 × $0.01 — clips this run + done clips missing SFX
+  });
+
+  it("prices clips by total seconds when provided", () => {
+    const c = estimateBatchCost({ sheets: 0, images: 0, clips: 3 },
+      { clipModelId: "kling-v3-pro", clipSecondsTotal: 12 });
+    // 12s × verified $/s — pin the number after Task 2's verification
+    expect(c.clipsUsd).toBeCloseTo(12 * getClipModel("kling-v3-pro")!.estUsdPerSecond, 2);
   });
 });

@@ -179,3 +179,43 @@ export function getClipModel(id: string | null | undefined): ClipModelSpec | nul
 export function isClipModelId(id: unknown): id is ClipModelId {
   return typeof id === "string" && CLIP_MODELS.some((m) => m.id === id);
 }
+
+/**
+ * Resolves clip duration following a precedence order:
+ * 1. Explicit wins if listed in durations (else nearest listed, ties up)
+ * 2. Nearest to slotSeconds (ties up)
+ * 3. If slotSeconds is null, use durationSeconds
+ */
+export function resolveClipDuration(
+  spec: Pick<ClipModelSpec, "durations" | "durationSeconds">,
+  slotSeconds: number | null,
+  explicit: number | null,
+): number {
+  // Check if explicit is in durations
+  if (explicit !== null && spec.durations.includes(explicit)) {
+    return explicit;
+  }
+
+  // If explicit is provided but not in durations, find nearest
+  if (explicit !== null) {
+    return spec.durations.reduce((best, d) =>
+      Math.abs(d - explicit) < Math.abs(best - explicit) ||
+      (Math.abs(d - explicit) === Math.abs(best - explicit) && d > best)
+        ? d
+        : best,
+    );
+  }
+
+  // If slotSeconds is provided, find nearest
+  if (slotSeconds !== null) {
+    return spec.durations.reduce((best, d) =>
+      Math.abs(d - slotSeconds) < Math.abs(best - slotSeconds) ||
+      (Math.abs(d - slotSeconds) === Math.abs(best - slotSeconds) && d > best)
+        ? d
+        : best,
+    );
+  }
+
+  // Default to durationSeconds
+  return spec.durationSeconds;
+}

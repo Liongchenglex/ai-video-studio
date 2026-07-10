@@ -8,6 +8,7 @@ import {
   estClipUsd,
   getClipModel,
   isClipModelId,
+  resolveClipDuration,
 } from "@/lib/clip-models";
 
 describe("clip model registry", () => {
@@ -139,5 +140,16 @@ describe("clip model registry", () => {
       duration: "5",
       generate_audio: false,
     });
+  });
+
+  it("resolveClipDuration: explicit → nearest-listed → slot → default", () => {
+    const v3 = getClipModel("kling-v3-pro")!;
+    expect(resolveClipDuration(v3, 3.3, null)).toBe(3);   // nearest
+    expect(resolveClipDuration(v3, 3.5, null)).toBe(4);   // tie rounds up
+    expect(resolveClipDuration(v3, null, null)).toBe(5);  // default
+    expect(resolveClipDuration(v3, 3.3, 8)).toBe(8);      // explicit wins
+    const veo = getClipModel("veo-3.1-fast")!;
+    expect(resolveClipDuration(veo, 3.3, null)).toBe(8);  // fixed-duration model
+    expect(resolveClipDuration(veo, null, 5)).toBe(8);    // explicit clamps to listed
   });
 });
