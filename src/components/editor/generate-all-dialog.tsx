@@ -134,6 +134,9 @@ export function GenerateAllDialog({
             </label>
             {includeClips && (
               <div className="space-y-2 pl-6">
+                <label className="block text-[11px] font-medium text-muted-foreground">
+                  Clip model — used for every clip in this batch
+                </label>
                 <select
                   value={clipModel}
                   onChange={(e) => setClipModel(e.target.value)}
@@ -145,6 +148,9 @@ export function GenerateAllDialog({
                     </option>
                   ))}
                 </select>
+                <p className="text-[10px] text-muted-foreground">
+                  {getClipModel(clipModel)?.whenToUse}
+                </p>
                 <label
                   className="flex items-center gap-2 text-xs"
                   title={

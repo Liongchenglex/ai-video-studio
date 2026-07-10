@@ -43,7 +43,8 @@ export const CLIP_MODELS: ClipModelSpec[] = [
     supportsEndFrame: true,
     nativeAudio: false,
     estUsdPerClip: 0.42,
-    whenToUse: "Default — best motion quality for the price; supports chaining to the next shot.",
+    whenToUse:
+      "Default. Balanced cost vs. quality: strong, stable motion and the best chaining. Tradeoff: 5s max per clip, no sound of its own (use Add SFX).",
     buildInput: ({ imageUrl, prompt, tailImageUrl }) => ({
       image_url: imageUrl,
       prompt,
@@ -59,7 +60,8 @@ export const CLIP_MODELS: ClipModelSpec[] = [
     supportsEndFrame: true,
     nativeAudio: false,
     estUsdPerClip: 0.36,
-    whenToUse: "Cheap drafts — fast and low-cost, but weak at directed motion.",
+    whenToUse:
+      "Cheapest & fastest — good for drafts and simple ambient motion. Tradeoff: weakest at directed, multi-step motion; visuals can drift on complex scenes.",
     // generate_audio defaults to true on fal's LTX endpoint; force it off —
     // the MMAudio SFX flow owns audio, we don't want an embedded soundtrack.
     buildInput: ({ imageUrl, prompt, tailImageUrl }) => ({
@@ -77,7 +79,8 @@ export const CLIP_MODELS: ClipModelSpec[] = [
     supportsEndFrame: false,
     nativeAudio: true,
     estUsdPerClip: 1.2,
-    whenToUse: "Hero shots — strongest complex motion and native audio; ~3× the default's cost.",
+    whenToUse:
+      "Best quality — strongest complex/directed motion, 8s clips, generates its own audio. Tradeoff: ~3× the default's cost and no chaining to the next shot.",
     buildInput: ({ imageUrl, prompt }) => ({ image_url: imageUrl, prompt }),
   },
 ];

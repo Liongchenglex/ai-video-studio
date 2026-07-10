@@ -752,6 +752,9 @@ function ShotEditPanel({
 
       {/* Clip model + chaining */}
       <div className="space-y-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Clip model — used by the Clip button above
+        </p>
         <select
           value={clipModelId}
           onChange={(e) => {
