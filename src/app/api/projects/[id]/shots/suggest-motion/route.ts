@@ -31,7 +31,7 @@ const MOTION_TOOL: Anthropic.Tool = {
     properties: {
       motion_prompt: {
         type: "string",
-        description: "Describe what HAPPENS over ~6 seconds. REQUIRED: a subject action — what the character / object / environment does in frame. OPTIONAL: a subtle camera move. Example: 'The emperor turns to face the soldiers as the camera drifts slightly closer.' Avoid dramatic zooms and 'slow pan' clichés. If no subject action fits the still, keep camera motion minimal.",
+        description: "Describe what HAPPENS over the clip (~5-6 seconds) in 2-3 phases so video models can follow it: (1) the subject's action and how it evolves — start state, movement, end state (e.g. 'The pendulum swings rapidly, decelerates, and settles pointing at 12'); (2) an optional subtle camera move; (3) pacing (where the motion is fast vs. settled). REQUIRED: a subject action. Avoid dramatic zooms and 'slow pan' clichés. If no subject action fits the still, keep camera motion minimal.",
       },
     },
     required: ["motion_prompt"],
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     const stream = anthropic.messages.stream({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 300,
-      system: `You suggest a single motion prompt for one shot in an AI video editor. Motion prompts describe what HAPPENS in the shot over ~6 seconds — prefer subject action over camera moves.${projectContext}\n\nReturn via the save_motion_prompt tool.`,
+      system: `You suggest a single motion prompt for one shot in an AI video editor. Motion prompts describe what HAPPENS in the shot over ~5-6 seconds as a short phased action (start state → movement → end state) — prefer subject action over camera moves, and make the phases explicit so image-to-video models can follow them.${projectContext}\n\nReturn via the save_motion_prompt tool.`,
       tools: [MOTION_TOOL],
       tool_choice: { type: "tool", name: "save_motion_prompt" },
       messages: [
