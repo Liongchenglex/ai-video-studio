@@ -119,7 +119,7 @@ export function GenerateAllDialog({
                   type="checkbox"
                   checked={includeClips}
                   onChange={(e) => setIncludeClips(e.target.checked)}
-                  disabled={preview.clips.count === 0}
+                  disabled={preview.clips.count === 0 && preview.sfx.count === 0}
                 />
                 Also generate {preview.clips.count} clips
               </span>
@@ -155,7 +155,7 @@ export function GenerateAllDialog({
                       checked={includeSfx}
                       onChange={(e) => setIncludeSfx(e.target.checked)}
                     />
-                    Add SFX to all clips
+                    Add SFX to all clips ({preview.sfx.count})
                   </span>
                   <span className="font-mono">
                     {includeSfx ? `~$${preview.sfx.estUsd.toFixed(2)}` : "—"}

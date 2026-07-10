@@ -4,8 +4,11 @@
  * clip model + SFX aware since Clip Engine v2). Counts missing-only work
  * (sheets for tagged entities, shot images, shot clips) server-side and
  * multiplies by the per-unit USD estimates for the requested clip model and
- * SFX inclusion. Display only — the dispatch endpoint recomputes targeting
- * itself and never trusts these numbers. Query params: clipModel, includeSfx.
+ * SFX inclusion. sfx.count is ALWAYS the potential SFX work (clips this run
+ * + done clips missing SFX) so the dialog can offer an SFX-only batch;
+ * sfx.estUsd follows the includeSfx flag (0 unless requested). Display only
+ * — the dispatch endpoint recomputes targeting itself and never trusts
+ * these numbers. Query params: clipModel, includeSfx.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -46,8 +49,10 @@ export async function GET(request: NextRequest, { params }: Params) {
   const includeSfx = url.searchParams.get("includeSfx") === "true";
 
   const targets = await computeBatchTargets(id);
-  // Clips generated this run need SFX too, plus already-done clips missing it.
-  const sfxCount = includeSfx ? targets.clipShotIds.length + targets.sfxShotIds.length : 0;
+  // Potential SFX work: clips generated this run need SFX too, plus
+  // already-done clips missing it. Reported regardless of includeSfx so the
+  // dialog can offer the SFX-only path; the cost stays gated on the flag.
+  const sfxCount = targets.clipShotIds.length + targets.sfxShotIds.length;
   const cost = estimateBatchCost(
     {
       sheets: targets.sheetEntityIds.length,
