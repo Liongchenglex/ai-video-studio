@@ -314,3 +314,23 @@ outcomes, and edge cases, but require either paid provider calls (fal.ai,
 Anthropic) or a live browser session and are left for the controller's
 Step 3 smoke-test pass; their `Results` cells are intentionally blank
 pending that execution.
+
+---
+
+## Live run results — 2026-07-10 (throwaway project `clip-engine-v2-smoke`, controller-executed with user approval)
+
+Setup: seeded 2 beats / 5 shots via psql; `npm run dev` + local Inngest dev server; driven via live browser session. Total observed spend ≈ $3.07 (5 images $0.20, 3× Kling $1.26, 1× LTX $0.36, 1× Veo $1.20, 5× MMAudio ≈ $0.05).
+
+- **TC-UI-1 PASS** — dropdown renders all 3 registry entries with prices/badges: "Kling 2.5 Turbo Pro — ~$0.42 · chains", "LTX 2.3 — ~$0.36 · chains", "Veo 3.1 Fast — ~$1.20 · audio".
+- **TC-UI-2 PASS** — guidance line follows selection (Kling default copy; Veo "Hero shots — strongest complex motion and native audio; ~3× the default's cost.").
+- **TC-UI-3 PASS** — chain toggle disabled on Veo with reason "Veo 3.1 Fast can't take an end frame — pick a model marked 'chains'".
+- **TC-UI-4 PASS** — next-shot thumbnail appears beside the toggle when chaining is on.
+- **TC-UI-5 PASS** — SFX controls render only for shots with a done clip; batch dialog shows model dropdown + "Suggest chained shots (AI)" (default on) + "Add SFX to all clips (N)".
+- **TC-API-1 PASS (via UI)** — clips generated with all three models; `clip_model` persisted per shot; per-model durations recorded (Kling 5s, LTX 6s, Veo 8s).
+- **TC-API-3 PASS (via UI)** — chainToNext toggle persisted through shot PATCH.
+- **TC-CHAIN-1 PASS** — Kling chained clip's final frame visually matches the next shot's still (keeper/lantern/lightning composition nearly identical); server log shows "chained".
+- **TC-CHAIN-2 covered** — Veo chain toggle disabled client-side (server degrade path covered by unit tests TC-U-2).
+- **TC-SFX-1 PASS** — MMAudio variant stored at `clip-sfx.mp4`; `clip.mp4` path untouched; steered prompt (clock ticking/chime) used; previews play the SFX variant unmuted after reload.
+- **TC-BATCH-1 PASS** — dialog itemization exact ($0.08 images + $0.84 Kling clips + $0.04 SFX(4) = $0.96); AI chain suggestion chained ONLY the same-scene boat pair (not across scene cuts); batch used the selected model for all clips; wave 4 added SFX to new AND pre-existing clips (potential-count 4 = 2 new + 2 existing without SFX).
+- **Complex-animation check PASS** — Veo clock clip: pendulum swings and hands settle at 12:00 in the final frame (the design's flagship directed-motion example).
+- **Finding (backlog)** — the batch poll treats only image/clip `generating` as batch-active, so wave-4 SFX completions that land after the last clip may not live-patch into the UI until reload (cosmetic; state is correct server-side).

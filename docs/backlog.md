@@ -689,3 +689,6 @@ reviews (MERGE READY at 5ccc341). None affect correctness of the shipped flows.
   the affected package (hit twice: @elevenlabs, @anthropic-ai/sdk).
 
 **Tag:** quality, clip-engine-v2
+- (post-live-run) Batch poll doesn't count sfx_status=generating as batch-active:
+  wave-4 SFX finishing after the last clip may not live-patch into the editor
+  until reload. Extend the poll's active/remaining detection to SFX.
