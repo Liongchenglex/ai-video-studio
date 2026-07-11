@@ -37,6 +37,22 @@ const MIN_BUDGET_USD = 0.25;
 const MAX_BUDGET_USD = 5.0;
 const GUIDANCE_MAX_CHARS = 500;
 
+/**
+ * True when the error is Postgres unique violation 23505 on the
+ * director_runs_one_active_per_shot partial index. Drizzle wraps driver
+ * errors in DrizzleQueryError with the postgres-js PostgresError on
+ * `cause`, so we walk the cause chain rather than assuming a shape.
+ */
+function isActiveRunUniqueViolation(err: unknown): boolean {
+  for (let e = err, depth = 0; e instanceof Error && depth < 5; e = e.cause as unknown, depth++) {
+    const pg = e as Error & { code?: unknown; constraint_name?: unknown };
+    if (pg.code === "23505" && pg.constraint_name === "director_runs_one_active_per_shot") {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function loadOwnedRow(projectId: string, shotId: string, userId: string) {
   const [row] = await db
     .select({ shot: shots, project: projects })
@@ -105,6 +121,11 @@ export async function POST(request: NextRequest, { params }: Params) {
     return badRequestResponse("Invalid request body");
   }
 
+  // Double-start guard, layer 1 (friendly path): app-level pre-check.
+  // Layer 2 is the director_runs_one_active_per_shot partial unique index —
+  // two starts racing past this pre-check cannot both insert, and the
+  // loser's 23505 is mapped to the same 409 below. Without the index a
+  // double-start would be a real double-spend (2x budget).
   if (await activeRunForShot(shotId)) {
     return NextResponse.json({ error: "A director run is already active for this shot" }, { status: 409 });
   }
@@ -118,7 +139,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
   }
 
-  const run = await createRun(id, shotId, budgetUsd!, guidance);
+  let run;
+  try {
+    run = await createRun(id, shotId, budgetUsd!, guidance);
+  } catch (err) {
+    if (isActiveRunUniqueViolation(err)) {
+      return NextResponse.json({ error: "A director run is already active for this shot" }, { status: 409 });
+    }
+    throw err;
+  }
 
   await inngest.send({
     name: "shot/director.run",

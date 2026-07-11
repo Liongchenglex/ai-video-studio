@@ -5,12 +5,17 @@
  * done-image gate, budget allow-list); the Task 7 Inngest loop owns the
  * actual direction work and calls appendRunEvent/addRunSpend as it goes.
  *
- * Concurrency notes (both matter under concurrent Inngest steps + polling):
+ * Concurrency notes:
  * - appendRunEvent computes `seq` via a single insert…select statement (max
- *   seq under the run, +1) so concurrent appends can never race a
- *   read-modify-write and collide on seq.
- * - addRunSpend increments spentUsd with a SQL expression for the same
- *   reason — never read-then-add-then-write.
+ *   seq under the run, +1). That minimizes — but does not fully eliminate —
+ *   the collision window under true concurrency; it's safe here because the
+ *   direct-shot loop is the run's only writer and its steps run
+ *   sequentially.
+ * - addRunSpend increments spentUsd with a SQL expression — never
+ *   read-then-add-then-write.
+ * - The director_runs_one_active_per_shot partial unique index (schema.ts)
+ *   backs the start route's 409 pre-check at the DB level: two racing
+ *   starts cannot both insert an active run.
  */
 import { db } from "@/lib/db";
 import {
@@ -28,6 +33,9 @@ const ACTIVE_STATUSES = ["running", "awaiting_approval"] as const;
  * Inserts a new director_runs row in the default `running` status. Does NOT
  * check for an existing active run — the 409 double-start guard is the
  * route's job (it needs to return a specific status code, not throw).
+ * Throws Postgres 23505 (via the director_runs_one_active_per_shot partial
+ * unique index) when an active run already exists — the route maps that to
+ * the same 409.
  */
 export async function createRun(
   projectId: string,
@@ -44,8 +52,10 @@ export async function createRun(
 
 /**
  * Appends one append-only event row, assigning `seq` as the next integer
- * after the run's current max in the same insert statement (no read step,
- * so no race between two concurrent appends).
+ * after the run's current max in the same insert statement. The
+ * insert-select minimizes (not eliminates) the seq-collision window; the
+ * sequential direct-shot loop being the run's only writer is what makes
+ * this safe in practice.
  */
 export async function appendRunEvent(
   runId: string,
@@ -109,7 +119,13 @@ export async function requestStop(runId: string): Promise<void> {
   await db.update(directorRuns).set({ stopRequested: true }).where(eq(directorRuns.id, runId));
 }
 
-/** The shot's currently in-flight run (running or awaiting_approval), if any — gates both the 409 double-start check and stop. */
+/**
+ * The shot's currently in-flight run (running or awaiting_approval), if any
+ * — gates both the 409 double-start check and stop. Latest-first ordering
+ * matches getRunWithEvents' semantics (the partial unique index guarantees
+ * at most one active run going forward; the orderBy is a belt for any
+ * pre-index data).
+ */
 export async function activeRunForShot(shotId: string): Promise<DirectorRun | null> {
   const [run] = await db
     .select()
@@ -120,6 +136,7 @@ export async function activeRunForShot(shotId: string): Promise<DirectorRun | nu
         or(...ACTIVE_STATUSES.map((status) => eq(directorRuns.status, status))),
       ),
     )
+    .orderBy(desc(directorRuns.createdAt))
     .limit(1);
   return run ?? null;
 }

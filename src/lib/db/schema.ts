@@ -10,11 +10,13 @@ import {
   boolean,
   uuid,
   index,
+  uniqueIndex,
   pgEnum,
   jsonb,
   integer,
   doublePrecision,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ─── BetterAuth tables ───────────────────────────────────────────────
 
@@ -373,7 +375,16 @@ export const directorRuns = pgTable(
       .$onUpdate(() => new Date())
       .notNull(),
   },
-  (t) => [index("director_runs_shot_id_idx").on(t.shotId)],
+  (t) => [
+    index("director_runs_shot_id_idx").on(t.shotId),
+    // DB-level backstop for the start route's check-then-insert 409 guard:
+    // at most one in-flight run per shot, enforced even when two starts
+    // race past the application pre-check (a double-start is a real
+    // double-spend — 2x budget).
+    uniqueIndex("director_runs_one_active_per_shot")
+      .on(t.shotId)
+      .where(sql`status IN ('running', 'awaiting_approval')`),
+  ],
 );
 
 export type DirectorRun = typeof directorRuns.$inferSelect;
