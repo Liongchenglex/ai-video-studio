@@ -325,6 +325,10 @@ export async function generateShotClip(
 
   try {
     const settings = settingsFromShot(shot);
+    // opts.model is trusted PRE-VALIDATED (both callers gate on isClipModelId).
+    // An invalid string here would overwrite the shot's model and silently fall
+    // back to the registry default inside renderDirectedClip — validate at the
+    // boundary, never pass raw client input.
     if (opts?.model) settings.clipModel = opts.model;
 
     const r2Key = `projects/${project.id}/shots/${shot.id}/clip.mp4`;
