@@ -48,6 +48,7 @@ import {
   DEFAULT_CLIP_MODEL_ID,
   resolveClipDuration,
   type ClipModelId,
+  type ClipModelSpec,
 } from "@/lib/clip-models";
 import { resolveEndFrame, type EndFrameSkipReason } from "@/lib/clip-chaining";
 import { resolveClipReferences, type RefsSkipReason } from "@/lib/clip-references";
@@ -85,11 +86,36 @@ async function loadTaggedEntities(projectId: string, referencedEntityIds: string
   return taggedIds.map((tid) => byId.get(tid)).filter((e): e is (typeof rows)[number] => e !== undefined);
 }
 
-export async function generateShotClip(
+/**
+ * Resolves the shot's entity references and uploads each ready sheet to fal
+ * storage. The pure keep/skip decision lives in resolveClipReferences; this
+ * owns only the DB load (loadTaggedEntities) and the uploads. Returns the
+ * fal URLs for buildInput plus the applied count / skip reason for the
+ * response and done-log.
+ */
+async function resolveAndUploadReferences(
   project: Project,
   shot: Shot,
-  opts?: { model?: string },
-): Promise<{
+  spec: Pick<ClipModelSpec, "supportsReferences">,
+): Promise<{ referenceImageUrls?: string[]; refsApplied: number; refsSkippedReason?: RefsSkipReason }> {
+  const taggedEntities = await loadTaggedEntities(project.id, shot.referencedEntityIds);
+  const refs = resolveClipReferences({ useEntityRefs: shot.useEntityRefs, spec, taggedEntities });
+  if (refs.sheetPaths.length === 0) {
+    return { refsApplied: 0, ...(refs.skipReason ? { refsSkippedReason: refs.skipReason } : {}) };
+  }
+
+  const referenceImageUrls = await Promise.all(
+    refs.sheetPaths.map((sheetPath, i) =>
+      uploadR2ObjectToFal(sheetPath, {
+        fileName: `entity-ref-${i}.png`,
+        contentType: "image/png",
+      }),
+    ),
+  );
+  return { referenceImageUrls, refsApplied: referenceImageUrls.length };
+}
+
+export interface GenerateShotClipResult {
   clipPath: string;
   clipUrl: string;
   clipDurationSeconds: number;
@@ -98,7 +124,13 @@ export async function generateShotClip(
   cameraBestEffort?: boolean;
   refsApplied?: number;
   refsSkippedReason?: RefsSkipReason;
-}> {
+}
+
+export async function generateShotClip(
+  project: Project,
+  shot: Shot,
+  opts?: { model?: string },
+): Promise<GenerateShotClipResult> {
   const spec =
     getClipModel(opts?.model) ??
     getClipModel(shot.clipModel) ??
@@ -150,22 +182,7 @@ export async function generateShotClip(
         })
       : undefined;
 
-    const taggedEntities = await loadTaggedEntities(project.id, shot.referencedEntityIds);
-    const refs = resolveClipReferences({
-      useEntityRefs: shot.useEntityRefs,
-      spec,
-      taggedEntities,
-    });
-    const referenceImageUrls = refs.sheetPaths.length
-      ? await Promise.all(
-          refs.sheetPaths.map((sheetPath, i) =>
-            uploadR2ObjectToFal(sheetPath, {
-              fileName: `entity-ref-${i}.png`,
-              contentType: "image/png",
-            }),
-          ),
-        )
-      : undefined;
+    const refs = await resolveAndUploadReferences(project, shot, spec);
 
     const cameraSelected = shot.cameraMove && isCameraMove(shot.cameraMove);
     const strength: CameraStrength =
@@ -193,7 +210,7 @@ export async function generateShotClip(
           : {}),
         ...(negativePrompt ? { negativePrompt } : {}),
         durationSeconds,
-        ...(referenceImageUrls ? { referenceImageUrls } : {}),
+        ...(refs.referenceImageUrls ? { referenceImageUrls: refs.referenceImageUrls } : {}),
       }),
       logs: true,
       onQueueUpdate: (update) => {
@@ -238,7 +255,7 @@ export async function generateShotClip(
     console.log(
       `[shot-clip] done: ${r2Key} (${clipDuration}s, ${spec.id}` +
         `${endFrameSkippedReason ? `, end frame skipped: ${endFrameSkippedReason}` : endFrame.tailImagePath ? ", end frame applied" : ""}` +
-        `${cameraBestEffort ? ", camera best-effort" : ""}, refs=${refs.sheetPaths.length})`,
+        `${cameraBestEffort ? ", camera best-effort" : ""}, refs=${refs.refsApplied})`,
     );
     return {
       clipPath: r2Key,
@@ -247,8 +264,8 @@ export async function generateShotClip(
       clipModel: spec.id,
       ...(endFrameSkippedReason ? { endFrameSkippedReason } : {}),
       ...(cameraBestEffort ? { cameraBestEffort } : {}),
-      ...(refs.sheetPaths.length ? { refsApplied: refs.sheetPaths.length } : {}),
-      ...(refs.skipReason ? { refsSkippedReason: refs.skipReason } : {}),
+      ...(refs.refsApplied ? { refsApplied: refs.refsApplied } : {}),
+      ...(refs.refsSkippedReason ? { refsSkippedReason: refs.refsSkippedReason } : {}),
     };
   } catch (error) {
     await db.update(shots).set({ clipStatus: "failed" }).where(eq(shots.id, shot.id)).catch(() => {});
