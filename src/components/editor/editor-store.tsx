@@ -1165,7 +1165,17 @@ export function entityShotCount(entityId: string, shots: EditorShot[]): number {
   return shots.filter((s) => s.referencedEntityIds.includes(entityId)).length;
 }
 
-/** Every entity tagged onto a shot, in entity-list order. */
+/**
+ * Every entity tagged onto a shot, in TAG order (referencedEntityIds), not
+ * entity-list order — must mirror the server's loadTaggedEntities
+ * (shot-clip-generation.ts): tag order decides which sheets survive the
+ * first-4 reference cap, so any list derived from this (e.g. the "Cast &
+ * locations featured" names) reflects what actually rides into the clip.
+ * Unknown ids (entity deleted, stale tag) are dropped.
+ */
 export function entitiesOfShot(shot: EditorShot, entities: EditorEntity[]): EditorEntity[] {
-  return entities.filter((e) => shot.referencedEntityIds.includes(e.id));
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  return (shot.referencedEntityIds ?? [])
+    .map((id) => byId.get(id))
+    .filter((e): e is EditorEntity => e !== undefined);
 }
