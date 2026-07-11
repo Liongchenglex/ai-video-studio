@@ -885,12 +885,31 @@ export function EditorProvider(props: {
           return;
         }
         const data = (await res.json()) as { run: DirectorRunView; events: DirectorEventView[] };
-        if (data.events.length > 0) {
-          directorSeqRef.current[shotId] = data.events[data.events.length - 1].seq;
-        }
         setDirectorState((prev) => {
-          const prevEvents = prev[shotId]?.events ?? [];
-          return { ...prev, [shotId]: { run: data.run, events: [...prevEvents, ...data.events] } };
+          const prevEntry = prev[shotId];
+          // Run boundary: a restart creates a NEW run whose seq count
+          // starts over — the GET route always returns the shot's LATEST
+          // run, so when its id differs from the tracked one, RESET the
+          // feed to this batch instead of stacking the old run's history
+          // under it. (The batch can be partial when this tick raced the
+          // restart with the old run's high cursor; the cursor recompute
+          // below drops back to the fresh batch's max, so the next poll
+          // self-heals any gap.)
+          const sameRun = prevEntry?.run?.id === data.run.id;
+          const base = sameRun ? prevEntry?.events ?? [] : [];
+          // Dedup by event id: a one-off refresh (start/stop) can race an
+          // in-flight interval tick that read the same `since` cursor —
+          // without this both would append the same rows (duplicate React
+          // keys included).
+          const seen = new Set(base.map((e) => e.id));
+          const merged = [...base, ...data.events.filter((e) => !seen.has(e.id))];
+          // Advance the cursor to the max seq actually present in state
+          // after this merge — derived from `merged`, never from the raw
+          // batch, so it can't run ahead of what's rendered. Writing the
+          // ref inside the updater is safe: the write is idempotent, so
+          // React's double-invoke of updaters lands the same value twice.
+          directorSeqRef.current[shotId] = merged.reduce((max, e) => Math.max(max, e.seq), 0);
+          return { ...prev, [shotId]: { run: data.run, events: merged } };
         });
       } catch (err) {
         console.error("[editor-store] director poll error:", err);

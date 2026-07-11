@@ -1407,7 +1407,7 @@ function DirectorGroup({ shot }: { shot: EditorShot }) {
       ) : run?.status === "awaiting_approval" ? (
         <div className="space-y-1">
           <p className="text-[10px] text-muted-foreground">{directorHistoryLabel(run)}</p>
-          <p className="text-[10px] italic text-muted-foreground">Verdict UI lands in Stage 3.</p>
+          <p className="text-[10px] italic text-muted-foreground">verdict UI lands in Stage 3</p>
         </div>
       ) : (
         <div className="space-y-1.5">
