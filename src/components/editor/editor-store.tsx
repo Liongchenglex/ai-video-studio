@@ -57,7 +57,22 @@ export interface EditorShot {
   clipUrl: string | null;
   clipDurationSeconds: number | null;
   clipModel: string | null;
-  chainToNext: boolean;
+  // ── Directing controls (Task 5/7/8) ──
+  cameraMove: string | null;
+  cameraStrength: string | null;
+  // "free" (model decides) | "next" (ends on the next shot's image) |
+  // "custom" (ends on an authored end frame). Supersedes the legacy
+  // boolean chain-to-next flag, which the store no longer reads or writes.
+  endsOn: "free" | "next" | "custom";
+  clipDurationChoice: number | null;
+  negativePrompt: string | null;
+  useEntityRefs: boolean;
+  // Authored custom end frame (endsOn = "custom"); serialized now (Task 8)
+  // though only Stage 3 UI consumes it, to avoid a second serializer pass.
+  endFramePath: string | null;
+  endFrameStatus: string;
+  endFrameInstruction: string | null;
+  endFrameUrl: string | null;
   sfxPath: string | null;
   sfxStatus: string;
   sfxUrl: string | null;
@@ -70,6 +85,10 @@ export interface EditorShot {
   // serializers (shots GET route, page.tsx) omit it, so it starts
   // undefined on load and is only ever set from a generateClip response.
   endFrameSkippedReason?: string | null;
+  // Client-only — whether the most recent clip generation applied the
+  // selected camera move as a best-effort prompt suffix (the model has no
+  // hard camera-control param). Same lifecycle as endFrameSkippedReason.
+  cameraBestEffort?: boolean;
 }
 
 export interface EditorEntity {
@@ -232,7 +251,12 @@ interface EditorContextValue {
         | "motionPrompt"
         | "referencedEntityIds"
         | "clipModel"
-        | "chainToNext"
+        | "cameraMove"
+        | "cameraStrength"
+        | "endsOn"
+        | "clipDurationChoice"
+        | "negativePrompt"
+        | "useEntityRefs"
       >
     >,
   ): Promise<void>;
@@ -382,7 +406,12 @@ export function EditorProvider(props: {
           | "motionPrompt"
           | "referencedEntityIds"
           | "clipModel"
-          | "chainToNext"
+          | "cameraMove"
+          | "cameraStrength"
+          | "endsOn"
+          | "clipDurationChoice"
+          | "negativePrompt"
+          | "useEntityRefs"
         >
       >,
     ) => {
@@ -514,12 +543,12 @@ export function EditorProvider(props: {
 
   const generateClip = useCallback(
     async (shotId: string, model?: string) => {
-      // Clear any stale reason from a previous generation — a fresh run
-      // may chain successfully, or fail differently.
+      // Clear any stale transients from a previous generation — a fresh run
+      // may chain / apply the camera move successfully, or fail differently.
       dispatch({
         type: "patchShot",
         shotId,
-        patch: { clipStatus: "generating", endFrameSkippedReason: null },
+        patch: { clipStatus: "generating", endFrameSkippedReason: null, cameraBestEffort: false },
       });
       try {
         const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/clip`, {
@@ -539,6 +568,7 @@ export function EditorProvider(props: {
           clipDurationSeconds: number;
           clipModel: string;
           endFrameSkippedReason?: string;
+          cameraBestEffort?: boolean;
         };
         if (data.endFrameSkippedReason) {
           console.warn(`[editor-store] end frame skipped: ${data.endFrameSkippedReason}`);
@@ -557,6 +587,7 @@ export function EditorProvider(props: {
             sfxStatus: "pending",
             sfxUrl: null,
             endFrameSkippedReason: data.endFrameSkippedReason ?? null,
+            cameraBestEffort: data.cameraBestEffort ?? false,
           },
         });
       } catch (err) {
@@ -629,7 +660,13 @@ export function EditorProvider(props: {
       }
       const data = (await res.json()) as { shots: EditorShot[] };
       // The recommend response rows are raw DB fields — no presigned URLs.
-      const shots = data.shots.map((s) => ({ ...s, imageUrl: null, clipUrl: null, sfxUrl: null }));
+      const shots = data.shots.map((s) => ({
+        ...s,
+        imageUrl: null,
+        clipUrl: null,
+        sfxUrl: null,
+        endFrameUrl: null,
+      }));
       dispatch({ type: "setShots", shots });
     } catch (err) {
       console.error("[editor-store] recommend shots fetch failed:", err);
@@ -909,7 +946,10 @@ export function EditorProvider(props: {
               clipUrl: f.clipUrl,
               clipDurationSeconds: f.clipDurationSeconds,
               clipModel: f.clipModel,
-              chainToNext: f.chainToNext,
+              endsOn: f.endsOn,
+              endFramePath: f.endFramePath,
+              endFrameStatus: f.endFrameStatus,
+              endFrameUrl: f.endFrameUrl,
               sfxPath: f.sfxPath,
               sfxStatus: f.sfxStatus,
               sfxUrl: f.sfxUrl,

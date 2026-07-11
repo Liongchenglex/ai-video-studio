@@ -59,7 +59,7 @@ const ENTITY_TYPE_ICON: Record<EditorEntity["type"], LucideIcon> = {
 };
 
 // Copy for a skipped chain (final-review finding #3). "not-requested" is
-// omitted on purpose — the note only renders when shot.chainToNext is true,
+// omitted on purpose — the note only renders when shot.endsOn !== "free",
 // so a request that was never made can never surface here.
 const CHAIN_SKIPPED_COPY: Record<string, string> = {
   "model-no-end-frame": "Chain skipped — this model can't take an end frame",
@@ -780,12 +780,14 @@ function ShotEditPanel({
         >
           <input
             type="checkbox"
-            checked={shot.chainToNext && !chainDisabledReason}
+            checked={shot.endsOn === "next" && !chainDisabledReason}
             disabled={!!chainDisabledReason}
-            onChange={(e) => updateShot(shot.id, { chainToNext: e.target.checked })}
+            onChange={(e) =>
+              updateShot(shot.id, { endsOn: e.target.checked ? "next" : "free" })
+            }
           />
           Chain to next shot
-          {shot.chainToNext && !chainDisabledReason && nextShot?.imageUrl && (
+          {shot.endsOn === "next" && !chainDisabledReason && nextShot?.imageUrl && (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
               src={nextShot.imageUrl}
@@ -797,7 +799,7 @@ function ShotEditPanel({
         {chainDisabledReason && (
           <p className="text-[10px] text-muted-foreground">{chainDisabledReason}</p>
         )}
-        {shot.chainToNext && shot.endFrameSkippedReason && (
+        {shot.endsOn !== "free" && shot.endFrameSkippedReason && (
           <p className="text-[10px] text-amber-600">
             {CHAIN_SKIPPED_COPY[shot.endFrameSkippedReason] ??
               `Chain skipped — ${shot.endFrameSkippedReason}`}

@@ -34,6 +34,7 @@ interface ProjectWorkspaceProps {
     tone: string;
     script: string | null;
     voiceId: string;
+    negativePrompt: string | null;
   };
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
