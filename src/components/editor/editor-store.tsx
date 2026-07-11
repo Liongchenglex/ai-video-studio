@@ -223,6 +223,12 @@ function reducer(state: State, action: Action): State {
 
 interface EditorContextValue {
   projectId: string;
+  // Project-level directing default (Directing Controls task 9) — the
+  // negative-prompt seed shots fall back to when they have no override of
+  // their own (see shot-clip-generation.ts). Edited via the toolbar's
+  // project-settings popover; per-shot fields read it for their placeholder.
+  projectNegativePrompt: string | null;
+  saveProjectSettings(patch: { negativePrompt?: string | null }): Promise<void>;
   beats: EditorBeat[];
   shots: EditorShot[];
   entities: EditorEntity[];
@@ -306,9 +312,17 @@ export function EditorProvider(props: {
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
   initialEntities?: EditorEntity[];
+  initialNegativePrompt?: string | null;
   children: ReactNode;
 }) {
-  const { projectId, initialBeats, initialShots, initialEntities = [], children } = props;
+  const {
+    projectId,
+    initialBeats,
+    initialShots,
+    initialEntities = [],
+    initialNegativePrompt = null,
+    children,
+  } = props;
 
   const [state, dispatch] = useReducer(reducer, undefined, () => ({
     beats: withOffsets(initialBeats),
@@ -319,6 +333,7 @@ export function EditorProvider(props: {
   }));
   const [recommending, setRecommending] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [projectNegativePrompt, setProjectNegativePrompt] = useState(initialNegativePrompt);
 
   const totalDuration = useMemo(() => totalDurationSeconds(state.beats), [state.beats]);
 
@@ -675,6 +690,37 @@ export function EditorProvider(props: {
     }
   }, [projectId]);
 
+  // ── Project-level mutations (Directing Controls task 9) ──
+  // Optimistic-patch-then-revert, same idiom as updateShot/updateEntity —
+  // only negativePrompt is settable today, but the patch shape leaves room
+  // for future project-settings fields without a new helper.
+  const saveProjectSettings = useCallback(
+    async (patch: { negativePrompt?: string | null }) => {
+      const prev = projectNegativePrompt;
+      if (patch.negativePrompt !== undefined) setProjectNegativePrompt(patch.negativePrompt);
+      try {
+        const res = await fetch(`/api/projects/${projectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] save project settings failed:", await res.text());
+          if (patch.negativePrompt !== undefined) setProjectNegativePrompt(prev);
+          return;
+        }
+        const updated = (await res.json()) as { negativePrompt?: string | null };
+        if (patch.negativePrompt !== undefined) {
+          setProjectNegativePrompt(updated.negativePrompt ?? null);
+        }
+      } catch (err) {
+        console.error("[editor-store] save project settings error:", err);
+        if (patch.negativePrompt !== undefined) setProjectNegativePrompt(prev);
+      }
+    },
+    [projectId, projectNegativePrompt],
+  );
+
   // ── Entity mutations ──
 
   const createEntity = useCallback(
@@ -994,6 +1040,8 @@ export function EditorProvider(props: {
 
   const value: EditorContextValue = {
     projectId,
+    projectNegativePrompt,
+    saveProjectSettings,
     beats: state.beats,
     shots: state.shots,
     entities: state.entities,

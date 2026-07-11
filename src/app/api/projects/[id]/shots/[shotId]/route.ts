@@ -249,7 +249,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     ) {
       return badRequestResponse("negativePrompt must be a string of at most 500 characters, or null");
     }
-    updates.negativePrompt = body.negativePrompt;
+    // Normalize an empty/whitespace-only string to null, matching the
+    // topic/brief idiom, so the UI can persist "cleared" consistently.
+    updates.negativePrompt = body.negativePrompt?.trim() || null;
   }
 
   if (body.useEntityRefs !== undefined) {

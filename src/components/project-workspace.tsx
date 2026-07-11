@@ -273,6 +273,7 @@ export function ProjectWorkspace({
           initialBeats={initialBeats}
           initialShots={initialShots}
           initialEntities={initialEntities}
+          negativePrompt={project.negativePrompt}
           onVoiceChange={handleVoiceChange}
         />
       )}

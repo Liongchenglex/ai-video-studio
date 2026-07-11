@@ -193,7 +193,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         { status: 400 },
       );
     }
-    updates.negativePrompt = body.negativePrompt;
+    // Normalize an empty/whitespace-only string to null, matching the
+    // topic/brief idiom above, so the UI can persist "cleared" consistently.
+    updates.negativePrompt = body.negativePrompt?.trim() || null;
   }
 
   if (Object.keys(updates).length === 0) {
