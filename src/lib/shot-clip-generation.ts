@@ -156,6 +156,49 @@ export interface DirectingSettings {
   slotSeconds: number | null;
 }
 
+/** One shot row in TRUE TIMELINE ORDER, as returned by loadOrderedProjectShots. */
+export interface OrderedProjectShot {
+  id: string;
+  beatId: string | null;
+  startInBeat: number | null;
+  sortOrder: number;
+  imagePath: string | null;
+  imageStatus: string | null;
+  imagePrompt: string;
+  endsOn: string;
+}
+
+/**
+ * Loads every shot in the project plus its beats and returns them in TRUE
+ * TIMELINE ORDER (orderShotsByTimeline) — the canonical "what's before/after
+ * this shot" query. Originally inlined once here (for endsOn: "next"
+ * resolution) and once more in director-context.ts (for neighbor image
+ * gathering); extracted to a single shared query (AI Assistant Director
+ * task 7 carry-forward) since both — and now the direct-shot loop's neighbor
+ * TEXT (imagePrompt/endsOn) — need the identical ordering.
+ */
+export async function loadOrderedProjectShots(projectId: string): Promise<OrderedProjectShot[]> {
+  const projectBeats = await db
+    .select({ id: beats.id, sortOrder: beats.sortOrder })
+    .from(beats)
+    .where(eq(beats.projectId, projectId))
+    .orderBy(asc(beats.sortOrder));
+  const projectShots = await db
+    .select({
+      id: shots.id,
+      beatId: shots.beatId,
+      startInBeat: shots.startInBeat,
+      sortOrder: shots.sortOrder,
+      imagePath: shots.imagePath,
+      imageStatus: shots.imageStatus,
+      imagePrompt: shots.imagePrompt,
+      endsOn: shots.endsOn,
+    })
+    .from(shots)
+    .where(eq(shots.projectId, projectId));
+  return orderShotsByTimeline(projectShots, projectBeats);
+}
+
 /**
  * Pure mapper from a shot row to DirectingSettings. slotSeconds is derived
  * from the shot's timeline bounds (endInBeat - startInBeat), degrading to
@@ -203,23 +246,7 @@ export async function renderDirectedClip(
     `[shot-clip] project=${project.id} shot=${shotId} model=${spec.id} | motion: ${settings.motionPrompt.substring(0, 120)}...`,
   );
 
-  const projectBeats = await db
-    .select({ id: beats.id, sortOrder: beats.sortOrder })
-    .from(beats)
-    .where(eq(beats.projectId, project.id))
-    .orderBy(asc(beats.sortOrder));
-  const projectShots = await db
-    .select({
-      id: shots.id,
-      beatId: shots.beatId,
-      startInBeat: shots.startInBeat,
-      sortOrder: shots.sortOrder,
-      imagePath: shots.imagePath,
-      imageStatus: shots.imageStatus,
-    })
-    .from(shots)
-    .where(eq(shots.projectId, project.id));
-  const ordered = orderShotsByTimeline(projectShots, projectBeats);
+  const ordered = await loadOrderedProjectShots(project.id);
   const currentIndex = ordered.findIndex((s) => s.id === shotId);
   const nextShot = currentIndex >= 0 ? (ordered[currentIndex + 1] ?? null) : null;
 

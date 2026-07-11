@@ -108,6 +108,43 @@ export async function getRunWithEvents(
   return { run, events };
 }
 
+/**
+ * Persists a freshly generated candidate clip onto the run row. Unlike
+ * spend, these are last-writer-wins fields (a new candidate replaces the
+ * old one outright), so a plain update — not a SQL increment — is correct.
+ * Called by the direct-shot loop's DirectorRunCtx.setCandidate, which
+ * generate_candidate_clip's execute() invokes after a successful render.
+ */
+export async function setRunCandidate(
+  runId: string,
+  candidate: { clipPath: string; clipDurationSeconds: number; clipModel: string },
+): Promise<void> {
+  await db
+    .update(directorRuns)
+    .set({
+      clipCandidatePath: candidate.clipPath,
+      candidateDurationSeconds: candidate.clipDurationSeconds,
+      candidateModel: candidate.clipModel,
+    })
+    .where(eq(directorRuns.id, runId));
+}
+
+/**
+ * Appends one proposal to the run's `proposals` jsonb array via `||`
+ * concatenation (same never-read-then-write reasoning as addRunSpend).
+ * No Stage-1 tool calls this yet (Stage 2's entity tag/create tools will);
+ * DirectorRunCtx.addProposal must exist regardless since it's part of the
+ * fixed ctx shape every tool's execute() can rely on.
+ */
+export async function addRunProposal(runId: string, proposal: Record<string, unknown>): Promise<void> {
+  await db
+    .update(directorRuns)
+    .set({
+      proposals: sql`coalesce(${directorRuns.proposals}, '[]'::jsonb) || ${JSON.stringify([proposal])}::jsonb`,
+    })
+    .where(eq(directorRuns.id, runId));
+}
+
 /** Fetches a single run by id, or null. Used by the start route to validate `retryOfRunId`. */
 export async function getRunById(runId: string): Promise<DirectorRun | null> {
   const [run] = await db.select().from(directorRuns).where(eq(directorRuns.id, runId)).limit(1);

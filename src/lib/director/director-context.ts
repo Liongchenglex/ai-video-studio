@@ -27,11 +27,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client } from "@/lib/r2";
-import { db } from "@/lib/db";
-import { shots, beats, type Project, type Shot, type DirectorRun } from "@/lib/db/schema";
-import { eq, asc } from "drizzle-orm";
-import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
-import type { DirectingSettings } from "@/lib/shot-clip-generation";
+import type { Project, Shot, DirectorRun } from "@/lib/db/schema";
+import { loadOrderedProjectShots, type DirectingSettings } from "@/lib/shot-clip-generation";
 
 /** Plain data the pure text builder needs — decoupled from the DB rows so it's trivial to unit test. */
 export interface DirectorBriefingData {
@@ -158,31 +155,15 @@ const CANDIDATE_FRAME_LABELS = ["0%", "33%", "66%", "100%"];
 
 /**
  * Resolves this shot's timeline neighbors (prev/next, TRUE timeline order
- * — same orderShotsByTimeline idiom renderDirectedClip uses, not the
- * possibly-stale sortOrder column) and returns only the ones with a done
- * still.
+ * — shared loadOrderedProjectShots query, same ordering renderDirectedClip
+ * uses, not the possibly-stale sortOrder column) and returns only the ones
+ * with a done still.
  */
 async function resolveNeighborImagePaths(
   project: Project,
   shot: Shot,
 ): Promise<{ prev?: string; next?: string }> {
-  const projectBeats = await db
-    .select({ id: beats.id, sortOrder: beats.sortOrder })
-    .from(beats)
-    .where(eq(beats.projectId, project.id))
-    .orderBy(asc(beats.sortOrder));
-  const projectShots = await db
-    .select({
-      id: shots.id,
-      beatId: shots.beatId,
-      startInBeat: shots.startInBeat,
-      sortOrder: shots.sortOrder,
-      imagePath: shots.imagePath,
-      imageStatus: shots.imageStatus,
-    })
-    .from(shots)
-    .where(eq(shots.projectId, project.id));
-  const ordered = orderShotsByTimeline(projectShots, projectBeats);
+  const ordered = await loadOrderedProjectShots(project.id);
   const currentIndex = ordered.findIndex((s) => s.id === shot.id);
   if (currentIndex < 0) return {};
 
