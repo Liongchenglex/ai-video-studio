@@ -200,9 +200,6 @@ export const shots = pgTable(
     // Model id from the clip-models registry used for the current clip;
     // also the shot's sticky dropdown selection. Null = registry default.
     clipModel: text("clip_model"),
-    // "This clip should end at the next shot's image" (first/last-frame
-    // conditioning). Honored only by models with supportsEndFrame.
-    chainToNext: boolean("chain_to_next").default(false).notNull(),
 
     // ── SFX (Clip Engine v2) ──
     // MMAudio variant (clip-sfx.mp4). Decoupled from clipStatus; reset
@@ -220,7 +217,8 @@ export const shots = pgTable(
     // ── Directing controls: end frame (Task 5) ──
     // How this shot's clip ends: 'free' (model decides), 'next' (ends on
     // the next shot's image), or 'custom' (ends on an authored end frame).
-    // Supersedes chainToNext above; chainToNext is kept until Task 16.
+    // Superseded and replaced the legacy chain_to_next boolean (backfilled
+    // chain_to_next=true -> 'next' before the column was dropped).
     endsOn: text("ends_on").default("free").notNull(),
     // R2 key of the authored custom end frame (endsOn = 'custom').
     endFramePath: text("end_frame_path"),
