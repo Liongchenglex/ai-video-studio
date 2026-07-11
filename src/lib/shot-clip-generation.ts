@@ -27,10 +27,18 @@
  * right half gets sortOrder+1 without shifting later rows) and after create
  * (appends by count), so a naive `gt(sortOrder)` query can pick the wrong
  * shot or miss the real next one entirely.
+ *
+ * Entity references (Directing Controls task 12): when the shot's
+ * useEntityRefs toggle is on and the resolved model supports it, every
+ * tagged entity with a done reference sheet (up to 4, tag order) is
+ * uploaded to fal storage and passed as referenceImageUrls; models map
+ * these to their cast/element-reference param (see kling-v3-pro's
+ * buildInput). Never fails the clip — resolveClipReferences reports why
+ * refs were skipped via refsSkippedReason instead.
  */
 import { db } from "@/lib/db";
-import { shots, beats, type Project, type Shot } from "@/lib/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { shots, beats, entities, type Project, type Shot } from "@/lib/db/schema";
+import { eq, asc, and, inArray } from "drizzle-orm";
 import { fal } from "@fal-ai/client";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, getDownloadUrl } from "@/lib/r2";
@@ -42,6 +50,7 @@ import {
   type ClipModelId,
 } from "@/lib/clip-models";
 import { resolveEndFrame, type EndFrameSkipReason } from "@/lib/clip-chaining";
+import { resolveClipReferences, type RefsSkipReason } from "@/lib/clip-references";
 import {
   isCameraMove,
   isCameraStrength,
@@ -52,6 +61,29 @@ import {
 import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
 
 fal.config({ credentials: process.env.FAL_KEY! });
+
+/**
+ * Loads the shot's tagged entities (referencedEntityIds), scoped to the
+ * project, reordered to match the tag array order (DB row order is
+ * unspecified). Mirrors the query idiom in resolvePrimaryEntity
+ * (shot-image-generation.ts) but returns ALL tagged entities, not just one.
+ */
+async function loadTaggedEntities(projectId: string, referencedEntityIds: string[] | null | undefined) {
+  const taggedIds = referencedEntityIds ?? [];
+  if (taggedIds.length === 0) return [];
+
+  const rows = await db
+    .select({
+      id: entities.id,
+      name: entities.name,
+      referenceStatus: entities.referenceStatus,
+      referenceSheetPath: entities.referenceSheetPath,
+    })
+    .from(entities)
+    .where(and(eq(entities.projectId, projectId), inArray(entities.id, taggedIds)));
+  const byId = new Map(rows.map((e) => [e.id, e]));
+  return taggedIds.map((tid) => byId.get(tid)).filter((e): e is (typeof rows)[number] => e !== undefined);
+}
 
 export async function generateShotClip(
   project: Project,
@@ -64,6 +96,8 @@ export async function generateShotClip(
   clipModel: ClipModelId;
   endFrameSkippedReason?: EndFrameSkipReason;
   cameraBestEffort?: boolean;
+  refsApplied?: number;
+  refsSkippedReason?: RefsSkipReason;
 }> {
   const spec =
     getClipModel(opts?.model) ??
@@ -116,6 +150,23 @@ export async function generateShotClip(
         })
       : undefined;
 
+    const taggedEntities = await loadTaggedEntities(project.id, shot.referencedEntityIds);
+    const refs = resolveClipReferences({
+      useEntityRefs: shot.useEntityRefs,
+      spec,
+      taggedEntities,
+    });
+    const referenceImageUrls = refs.sheetPaths.length
+      ? await Promise.all(
+          refs.sheetPaths.map((sheetPath, i) =>
+            uploadR2ObjectToFal(sheetPath, {
+              fileName: `entity-ref-${i}.png`,
+              contentType: "image/png",
+            }),
+          ),
+        )
+      : undefined;
+
     const cameraSelected = shot.cameraMove && isCameraMove(shot.cameraMove);
     const strength: CameraStrength =
       shot.cameraStrength && isCameraStrength(shot.cameraStrength) ? shot.cameraStrength : "medium";
@@ -142,6 +193,7 @@ export async function generateShotClip(
           : {}),
         ...(negativePrompt ? { negativePrompt } : {}),
         durationSeconds,
+        ...(referenceImageUrls ? { referenceImageUrls } : {}),
       }),
       logs: true,
       onQueueUpdate: (update) => {
@@ -186,7 +238,7 @@ export async function generateShotClip(
     console.log(
       `[shot-clip] done: ${r2Key} (${clipDuration}s, ${spec.id}` +
         `${endFrameSkippedReason ? `, end frame skipped: ${endFrameSkippedReason}` : endFrame.tailImagePath ? ", end frame applied" : ""}` +
-        `${cameraBestEffort ? ", camera best-effort" : ""})`,
+        `${cameraBestEffort ? ", camera best-effort" : ""}, refs=${refs.sheetPaths.length})`,
     );
     return {
       clipPath: r2Key,
@@ -195,6 +247,8 @@ export async function generateShotClip(
       clipModel: spec.id,
       ...(endFrameSkippedReason ? { endFrameSkippedReason } : {}),
       ...(cameraBestEffort ? { cameraBestEffort } : {}),
+      ...(refs.sheetPaths.length ? { refsApplied: refs.sheetPaths.length } : {}),
+      ...(refs.skipReason ? { refsSkippedReason: refs.skipReason } : {}),
     };
   } catch (error) {
     await db.update(shots).set({ clipStatus: "failed" }).where(eq(shots.id, shot.id)).catch(() => {});
