@@ -1,13 +1,25 @@
 /**
  * Shot clip generation service (v4 P3 extraction; multi-model since Clip
- * Engine v2). Resolves the clip model from the registry (explicit param →
- * shot.clipModel → default), optionally passes the NEXT shot's still as the
- * end frame when shot.chainToNext is set and the model supports it (a
- * skipped chain degrades to unchained generation and reports why), calls
- * fal, and stores at projects/{projectId}/shots/{shotId}/clip.mp4. Owns the
- * clipStatus generating → done/failed lifecycle; throws after marking
- * failed. Regenerating a clip resets any SFX variant — the old audio no
- * longer matches. Caller must ensure shot.imagePath is set. Called by
+ * Engine v2; camera/negative-prompt/duration/ends_on wiring added in
+ * Directing Controls task 7). Resolves the clip model from the registry
+ * (explicit param → shot.clipModel → default), resolves the end frame via
+ * resolveEndFrame based on shot.endsOn ("free" | "next" | "custom") — "next"
+ * uses the timeline-next shot's done image, "custom" uses the shot's
+ * authored end-frame asset, and any resolution that can't produce a tail
+ * image degrades to an unchained clip and reports why via
+ * endFrameSkippedReason rather than failing the clip. When a camera move is
+ * selected and the model has no hard camera-control param, a deterministic
+ * camera phrase is appended to the motion prompt as a best-effort fallback
+ * (cameraBestEffort); models that DO support hard camera params (none yet)
+ * get the move passed as structured input instead. Duration is resolved via
+ * resolveClipDuration (explicit choice → nearest to the shot's timeline slot
+ * → model default) and always passed to buildInput. A negative prompt (shot
+ * override, else project default, trimmed) is passed only when the model
+ * supports one. Calls fal, and stores at
+ * projects/{projectId}/shots/{shotId}/clip.mp4. Owns the clipStatus
+ * generating → done/failed lifecycle; throws after marking failed.
+ * Regenerating a clip resets any SFX variant — the old audio no longer
+ * matches. Caller must ensure shot.imagePath is set. Called by
  * POST /shots/[shotId]/clip AND the batch orchestrator.
  *
  * "Next shot" is resolved by TRUE TIMELINE ORDER (orderShotsByTimeline),
@@ -26,9 +38,17 @@ import { uploadR2ObjectToFal } from "@/lib/fal-upload";
 import {
   getClipModel,
   DEFAULT_CLIP_MODEL_ID,
+  resolveClipDuration,
   type ClipModelId,
 } from "@/lib/clip-models";
-import { resolveChainDecision, type ChainSkipReason } from "@/lib/clip-chaining";
+import { resolveEndFrame, type EndFrameSkipReason } from "@/lib/clip-chaining";
+import {
+  isCameraMove,
+  isCameraStrength,
+  cameraPromptSuffix,
+  type CameraMove,
+  type CameraStrength,
+} from "@/lib/clip-camera";
 import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
 
 fal.config({ credentials: process.env.FAL_KEY! });
@@ -42,7 +62,8 @@ export async function generateShotClip(
   clipUrl: string;
   clipDurationSeconds: number;
   clipModel: ClipModelId;
-  chainSkippedReason?: ChainSkipReason;
+  endFrameSkippedReason?: EndFrameSkipReason;
+  cameraBestEffort?: boolean;
 }> {
   const spec =
     getClipModel(opts?.model) ??
@@ -76,8 +97,10 @@ export async function generateShotClip(
     const currentIndex = ordered.findIndex((s) => s.id === shot.id);
     const nextShot = currentIndex >= 0 ? (ordered[currentIndex + 1] ?? null) : null;
 
-    const chain = resolveChainDecision({
-      chainToNext: shot.chainToNext,
+    const endFrame = resolveEndFrame({
+      endsOn: (shot.endsOn ?? "free") as "free" | "next" | "custom",
+      endFramePath: shot.endFramePath,
+      endFrameStatus: shot.endFrameStatus,
       spec,
       nextShot: nextShot ?? null,
     });
@@ -86,15 +109,40 @@ export async function generateShotClip(
       fileName: "shot-image.png",
       contentType: "image/png",
     });
-    const tailImageUrl = chain.useTail
-      ? await uploadR2ObjectToFal(chain.tailImagePath, {
+    const tailImageUrl = endFrame.tailImagePath
+      ? await uploadR2ObjectToFal(endFrame.tailImagePath, {
           fileName: "shot-tail-image.png",
           contentType: "image/png",
         })
       : undefined;
 
+    const cameraSelected = shot.cameraMove && isCameraMove(shot.cameraMove);
+    const strength: CameraStrength =
+      shot.cameraStrength && isCameraStrength(shot.cameraStrength) ? shot.cameraStrength : "medium";
+    const cameraBestEffort = Boolean(cameraSelected && !spec.supportsCameraControl);
+    const prompt = cameraBestEffort
+      ? `${shot.motionPrompt} ${cameraPromptSuffix(shot.cameraMove as CameraMove, strength)}`
+      : shot.motionPrompt;
+
+    const negativePrompt = spec.supportsNegativePrompt
+      ? (shot.negativePrompt?.trim() || project.negativePrompt?.trim() || undefined)
+      : undefined;
+
+    const slotSeconds =
+      shot.startInBeat != null && shot.endInBeat != null ? shot.endInBeat - shot.startInBeat : null;
+    const durationSeconds = resolveClipDuration(spec, slotSeconds, shot.clipDurationChoice ?? null);
+
     const result = await fal.subscribe(spec.falEndpoint, {
-      input: spec.buildInput({ imageUrl, prompt: shot.motionPrompt, tailImageUrl }),
+      input: spec.buildInput({
+        imageUrl,
+        prompt,
+        tailImageUrl,
+        ...(cameraSelected && spec.supportsCameraControl
+          ? { camera: { move: shot.cameraMove as CameraMove, strength } }
+          : {}),
+        ...(negativePrompt ? { negativePrompt } : {}),
+        durationSeconds,
+      }),
       logs: true,
       onQueueUpdate: (update) => {
         if (update.status === "IN_PROGRESS" && "logs" in update) {
@@ -134,17 +182,19 @@ export async function generateShotClip(
       })
       .where(eq(shots.id, shot.id));
 
-    const chainSkippedReason =
-      shot.chainToNext && !chain.useTail ? chain.reason : undefined;
+    const endFrameSkippedReason = shot.endsOn !== "free" ? endFrame.skipReason : undefined;
     console.log(
-      `[shot-clip] done: ${r2Key} (${clipDuration}s, ${spec.id}${chainSkippedReason ? `, chain skipped: ${chainSkippedReason}` : chain.useTail ? ", chained" : ""})`,
+      `[shot-clip] done: ${r2Key} (${clipDuration}s, ${spec.id}` +
+        `${endFrameSkippedReason ? `, end frame skipped: ${endFrameSkippedReason}` : endFrame.tailImagePath ? ", end frame applied" : ""}` +
+        `${cameraBestEffort ? ", camera best-effort" : ""})`,
     );
     return {
       clipPath: r2Key,
       clipUrl: await getDownloadUrl(r2Key),
       clipDurationSeconds: Math.round(clipDuration),
       clipModel: spec.id,
-      ...(chainSkippedReason ? { chainSkippedReason } : {}),
+      ...(endFrameSkippedReason ? { endFrameSkippedReason } : {}),
+      ...(cameraBestEffort ? { cameraBestEffort } : {}),
     };
   } catch (error) {
     await db.update(shots).set({ clipStatus: "failed" }).where(eq(shots.id, shot.id)).catch(() => {});

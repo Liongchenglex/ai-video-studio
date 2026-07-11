@@ -64,11 +64,12 @@ export interface EditorShot {
   // Reference Bible tagging (F-16) — populated server-side by page.tsx from
   // the DB column (which defaults to [] there too); always an array here.
   referencedEntityIds: string[];
-  // Client-only (final-review finding #3) — why a requested chain was
-  // skipped on the most recent clip generation. Never persisted: both
-  // server serializers (shots GET route, page.tsx) omit it, so it starts
+  // Client-only (final-review finding #3; renamed from chainSkippedReason
+  // in Directing Controls task 7) — why a requested end frame was skipped
+  // on the most recent clip generation. Never persisted: both server
+  // serializers (shots GET route, page.tsx) omit it, so it starts
   // undefined on load and is only ever set from a generateClip response.
-  chainSkippedReason?: string | null;
+  endFrameSkippedReason?: string | null;
 }
 
 export interface EditorEntity {
@@ -518,7 +519,7 @@ export function EditorProvider(props: {
       dispatch({
         type: "patchShot",
         shotId,
-        patch: { clipStatus: "generating", chainSkippedReason: null },
+        patch: { clipStatus: "generating", endFrameSkippedReason: null },
       });
       try {
         const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/clip`, {
@@ -537,10 +538,10 @@ export function EditorProvider(props: {
           clipStatus: string;
           clipDurationSeconds: number;
           clipModel: string;
-          chainSkippedReason?: string;
+          endFrameSkippedReason?: string;
         };
-        if (data.chainSkippedReason) {
-          console.warn(`[editor-store] chain skipped: ${data.chainSkippedReason}`);
+        if (data.endFrameSkippedReason) {
+          console.warn(`[editor-store] end frame skipped: ${data.endFrameSkippedReason}`);
         }
         dispatch({
           type: "patchShot",
@@ -555,7 +556,7 @@ export function EditorProvider(props: {
             sfxPath: null,
             sfxStatus: "pending",
             sfxUrl: null,
-            chainSkippedReason: data.chainSkippedReason ?? null,
+            endFrameSkippedReason: data.endFrameSkippedReason ?? null,
           },
         });
       } catch (err) {

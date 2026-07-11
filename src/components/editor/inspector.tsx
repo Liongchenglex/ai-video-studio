@@ -797,10 +797,10 @@ function ShotEditPanel({
         {chainDisabledReason && (
           <p className="text-[10px] text-muted-foreground">{chainDisabledReason}</p>
         )}
-        {shot.chainToNext && shot.chainSkippedReason && (
+        {shot.chainToNext && shot.endFrameSkippedReason && (
           <p className="text-[10px] text-amber-600">
-            {CHAIN_SKIPPED_COPY[shot.chainSkippedReason] ??
-              `Chain skipped — ${shot.chainSkippedReason}`}
+            {CHAIN_SKIPPED_COPY[shot.endFrameSkippedReason] ??
+              `Chain skipped — ${shot.endFrameSkippedReason}`}
           </p>
         )}
       </div>

@@ -6,7 +6,7 @@
  * whose clip should end on the next shot's still — gated on includeClips,
  * the suggestChains flag, the selected model supporting end frames, and
  * this run actually having clip targets, so it never fires a paid Haiku
- * call or flips chainToNext when chaining couldn't affect this run),
+ * call or flips endsOn when chaining couldn't affect this run),
  * 3) clips (only when includeClips, only for shots whose image is done,
  * threading the selected clip model), 4) optional SFX for shots whose clip
  * just finished. Each item
@@ -172,7 +172,7 @@ export const generateBatchFn = inngest.createFunction(
         const orderedShotRows = orderShotsByTimeline(shotRows, beatRows);
         const ids = await suggestChains(orderedShotRows, project?.brief ?? null);
         if (ids.length > 0) {
-          await db.update(shots).set({ chainToNext: true }).where(inArray(shots.id, ids));
+          await db.update(shots).set({ endsOn: "next" }).where(inArray(shots.id, ids));
         }
         return ids.length;
       });

@@ -3,20 +3,8 @@
  * to apply an end frame (tail image) to a clip based on the end-frame mode
  * (free/next/custom), model capabilities, and asset readiness. Reasons are
  * surfaced to the UI so skipped chains degrade loudly, never failing the clip.
- *
- * resolveChainDecision delegates to resolveEndFrame for backward compatibility.
  */
 import type { ClipModelSpec } from "@/lib/clip-models";
-
-export type ChainSkipReason =
-  | "not-requested"
-  | "model-no-end-frame"
-  | "no-next-shot"
-  | "next-image-not-ready";
-
-export type ChainDecision =
-  | { useTail: true; tailImagePath: string }
-  | { useTail: false; reason: ChainSkipReason };
 
 export type EndFrameSkipReason =
   | "model-no-end-frame"
@@ -66,31 +54,4 @@ export function resolveEndFrame(args: {
   }
 
   return {};
-}
-
-export function resolveChainDecision(args: {
-  chainToNext: boolean;
-  spec: Pick<ClipModelSpec, "supportsEndFrame">;
-  nextShot: { imagePath: string | null; imageStatus: string | null } | null;
-}): ChainDecision {
-  // Delegate to resolveEndFrame for consistency
-  const result = resolveEndFrame({
-    endsOn: args.chainToNext ? "next" : "free",
-    endFramePath: null,
-    endFrameStatus: null,
-    spec: args.spec,
-    nextShot: args.nextShot,
-  });
-
-  // Map back to ChainDecision shape
-  if ("tailImagePath" in result && result.tailImagePath) {
-    return { useTail: true, tailImagePath: result.tailImagePath };
-  }
-
-  if ("skipReason" in result && result.skipReason) {
-    return { useTail: false, reason: result.skipReason as ChainSkipReason };
-  }
-
-  // For "free" mode, map to "not-requested"
-  return { useTail: false, reason: "not-requested" };
 }
