@@ -524,3 +524,16 @@ Sections 3 (UI) and 4 (paid end-to-end, incl. the hero test) require
 either a live browser session or real fal.ai spend and are left for the
 controller's Task 17 Step 5 smoke-test + live-verification pass; their
 `Results` cells are intentionally blank pending that execution.
+
+---
+
+## Live paid run results — 2026-07-11 (throwaway `directing-controls-smoke`, controller-executed with user approval)
+
+Setup: seeded 2 beats / 4 shots / 2 entities via psql; dev + Inngest dev servers; driven via the app's own session (page-context fetch) + dialog UI. Observed spend ≈ $2.03 (2 sheets $0.08, 4 images $0.16, 1 end frame + 1 image edit $0.08, hero Kling-v3 4s ~$0.45, LTX $0.36, batch 2× Kling-v3 4s ~$0.90). Two transient fal 403s occurred immediately after a balance top-up (unlock propagation) — retries succeeded; statuses degraded and recovered exactly as designed.
+
+- **TC-PAID hero PASS** — one Kling v3 clip combining camera push-in + 2 cast refs + authored custom end frame: log `(kling-v3-pro, end frame applied, camera best-effort, refs=2)`; frame extraction confirmed the clip's final frame matches the Kontext-authored end frame (lantern raised) with the push-in visible and BOTH cast members (keeper + dog) on-model. Real file duration 4.04s for a requested 4s.
+- **Bug found & fixed by this run:** fal's runtime elements validator requires `reference_image_urls` alongside `frontal_image_url` (docs said optional) — 422 caught live, fixed in `9ba874b`, test pinned.
+- **Bug found & fixed by this run:** duration fallback recorded the model default (5) instead of the requested duration when fal omits `duration` in its response — fixed in `e0039ba` (fallback = requested), confirmed by batch clips recording 4s.
+- **TC LTX camera fallback PASS** — `(ltx-2.3, camera best-effort, refs=0)`; pan-left suffix written into the prompt.
+- **TC Edit image PASS** — Kontext instruction-edit overwrote the still in place (200, same R2 key).
+- **TC batch PASS** — dialog priced clips duration-aware (~$0.90 = 2×4s×$0.112, not 2×default $0.56); AI chain suggestion upgraded ONLY the same-scene free pair (shot 3 → `ends_on=next`, clip log "end frame applied"), skipped the scene-change pair, and **left the authored `ends_on=custom` shot untouched** (the final-review Critical fix verified live).
