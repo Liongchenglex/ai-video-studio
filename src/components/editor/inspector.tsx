@@ -556,8 +556,10 @@ function ShotEditPanel({
   const handleEditImage = async () => {
     const trimmed = editImageInstruction.trim();
     if (!trimmed) return;
-    await editShotImage(shot.id, trimmed);
-    setEditImageInstruction("");
+    // Clear only on success — a failed paid call keeps the typed
+    // instruction so the user can retry or tweak it.
+    const ok = await editShotImage(shot.id, trimmed);
+    if (ok) setEditImageInstruction("");
   };
 
   const hasImage = !!shot.imageUrl;
@@ -988,6 +990,7 @@ function ShotEditPanel({
                   disabled={
                     !endFrameInstructionDraft.trim() ||
                     !shot.imagePath ||
+                    shot.imageStatus !== "done" ||
                     shot.endFrameStatus === "generating"
                   }
                   title={

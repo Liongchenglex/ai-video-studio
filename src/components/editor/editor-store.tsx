@@ -276,7 +276,7 @@ interface EditorContextValue {
   deleteShot(shotId: string): Promise<void>;
   splitShot(shotId: string, atInBeat: number): Promise<void>;
   generateImage(shotId: string): Promise<void>;
-  editShotImage(shotId: string, instruction: string): Promise<void>;
+  editShotImage(shotId: string, instruction: string): Promise<boolean>;
   generateClip(shotId: string, model?: string): Promise<void>;
   generateSfx(shotId: string, prompt?: string): Promise<void>;
   removeSfx(shotId: string): Promise<void>;
@@ -566,8 +566,11 @@ export function EditorProvider(props: {
     [projectId],
   );
 
+  // Returns true only on success (createEntity idiom) — the inspector's
+  // inline edit form keeps the typed instruction around on failure so a
+  // failed paid call doesn't wipe the user's text.
   const editShotImage = useCallback(
-    async (shotId: string, instruction: string) => {
+    async (shotId: string, instruction: string): Promise<boolean> => {
       dispatch({ type: "patchShot", shotId, patch: { imageStatus: "generating" } });
       try {
         const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/image/edit`, {
@@ -578,7 +581,7 @@ export function EditorProvider(props: {
         if (!res.ok) {
           console.warn("[editor-store] image edit failed:", await res.text());
           dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
-          return;
+          return false;
         }
         const data = (await res.json()) as {
           imagePath: string;
@@ -600,9 +603,11 @@ export function EditorProvider(props: {
             ...(hasEndFrame ? { endFrameStatus: "pending" as const } : {}),
           },
         });
+        return true;
       } catch (err) {
         console.error("[editor-store] image edit error:", err);
         dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
+        return false;
       }
     },
     [projectId, state.shots],
