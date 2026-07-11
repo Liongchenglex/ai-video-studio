@@ -258,6 +258,7 @@ interface ToolCallOutcome {
   finishCalled: { verdict: string; quality: "pass" | "best_effort" } | null;
   actedThisIteration: boolean;
   candidateGenerated: boolean;
+  budgetRefused: boolean;
 }
 
 /** Runs a single tool_use block: budget-check (paid tools only) -> execute -> event + tool_result. Never throws. */
@@ -274,6 +275,7 @@ async function runOneToolCall(
     finishCalled: null,
     actedThisIteration: false,
     candidateGenerated: false,
+    budgetRefused: false,
   };
 
   const tool = getDirectorTool(block.name);
@@ -292,6 +294,7 @@ async function runOneToolCall(
       await ctx.appendEvent("error", { tool: tool.name, input, message: check.refusal });
       return {
         ...empty,
+        budgetRefused: true,
         toolResult: {
           type: "tool_result",
           tool_use_id: block.id,
@@ -343,6 +346,7 @@ interface ActStepResult {
   finishCalled: { verdict: string; quality: "pass" | "best_effort" } | null;
   actedThisIteration: boolean;
   candidateGenerated: boolean;
+  budgetRefusalSeen: boolean;
 }
 
 /**
@@ -355,6 +359,7 @@ async function runActStep(
   project: Project,
   shot: Shot,
   runId: string,
+  iteration: number,
   scratchIn: DirectingSettings,
   scratchImageEditedIn: boolean,
   critique: AssessResult,
@@ -364,12 +369,13 @@ async function runActStep(
 
   const ctx = buildDirectorCtx(project, shot, runId, { ...scratchIn }, scratchImageEditedIn);
   const briefing = await loadBriefing(project, shot, startRun, ctx.scratch);
-  const intro = `${briefing.text}\n\n## Latest self-critique\n\n${JSON.stringify(critique)}\n\nAddress the critique using your tools, then call finish with a verdict.`;
+  const intro = `Iteration ${iteration} of ${MAX_ITERATIONS}.\n\n${briefing.text}\n\n## Latest self-critique\n\n${JSON.stringify(critique)}\n\nAddress the critique using your tools, then call finish with a verdict.`;
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: toUserContent(intro, briefing.images) }];
   let spentUsd = startRun.spentUsd;
   let actedThisIteration = false;
   let candidateGenerated = false;
+  let budgetRefusalSeen = false;
   let finishCalled: ActStepResult["finishCalled"] = null;
 
   for (let turn = 0; turn < MAX_ACT_TURNS && !finishCalled; turn++) {
@@ -388,12 +394,24 @@ async function runActStep(
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of response.content) {
       if (block.type !== "tool_use") continue;
+      // finish ends the run — never execute tools the model queued after it
+      // in the same (parallel-tool-use) response, but still answer each
+      // block: the API requires a tool_result for every tool_use id.
+      if (finishCalled) {
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: "Skipped: finish was already called in this response.",
+        });
+        continue;
+      }
       const outcome = await runOneToolCall(ctx, runId, block, spentUsd);
       spentUsd = outcome.spentUsd;
       toolResults.push(outcome.toolResult);
       if (outcome.finishCalled) finishCalled = outcome.finishCalled;
       if (outcome.actedThisIteration) actedThisIteration = true;
       if (outcome.candidateGenerated) candidateGenerated = true;
+      if (outcome.budgetRefused) budgetRefusalSeen = true;
     }
     messages.push({ role: "user", content: toolResults });
   }
@@ -404,6 +422,7 @@ async function runActStep(
     finishCalled,
     actedThisIteration,
     candidateGenerated,
+    budgetRefusalSeen,
   };
 }
 
@@ -442,6 +461,7 @@ interface LoopOutcome {
   finishResult: { verdict: string; quality: "pass" | "best_effort" } | null;
   stuckNote: string | null;
   stopped: boolean;
+  budgetRefusalSeen: boolean;
 }
 
 /** Terminal write: settingsSnapshot (Task 13's promotionPlan reads exactly this shape) + status + verdict. */
@@ -458,20 +478,28 @@ async function finalizeRun(
     scratchImageEdited,
   };
 
+  // Finish-integrity backstop: a "pass" verdict with no candidate on the
+  // fresh run row is a hallucinated pass (finish's own validation can't see
+  // the run) — downgrade to best_effort so it never presents as passing.
+  let finishResult = outcome.finishResult;
+  if (finishResult?.quality === "pass" && !run?.clipCandidatePath) {
+    finishResult = { ...finishResult, quality: "best_effort" };
+  }
+
   let status: "awaiting_approval" | "stopped" = "awaiting_approval";
   let verdict: string;
   if (outcome.stopped || run?.stopRequested) {
     status = "stopped";
     verdict = "Stopped by user request.";
-  } else if (outcome.finishResult) {
+  } else if (finishResult) {
     verdict =
-      outcome.finishResult.quality === "best_effort"
-        ? `[best effort] ${outcome.finishResult.verdict}`
-        : outcome.finishResult.verdict;
+      finishResult.quality === "best_effort" ? `[best effort] ${finishResult.verdict}` : finishResult.verdict;
   } else if (outcome.stuckNote) {
     verdict = outcome.stuckNote;
-  } else {
+  } else if (outcome.budgetRefusalSeen) {
     verdict = `Budget exhausted — best effort within $${(run?.budgetUsd ?? 0).toFixed(2)}.`;
+  } else {
+    verdict = `Iteration limit reached — best effort within ${MAX_ITERATIONS} passes.`;
   }
 
   await db.update(directorRuns).set({ status, verdict, settingsSnapshot }).where(eq(directorRuns.id, runId));
@@ -525,10 +553,15 @@ export const directShotFn = inngest.createFunction(
     let finishResult: LoopOutcome["finishResult"] = null;
     let stuckNote: string | null = null;
     let stopped = false;
+    let budgetRefusalSeen = false;
 
     try {
       for (let i = 1; i <= MAX_ITERATIONS; i++) {
         // Stop flag re-read fresh at every step boundary, outside any step.run.
+        // Replay+stop edge: on a replay that finds the stop flag set, we break
+        // before re-running act steps, so settingsSnapshot may finalize at the
+        // initial (or partially advanced) scratch — inert, because only
+        // awaiting_approval runs are promotable and this path lands "stopped".
         const boundary = await getRunById(runId);
         if (!boundary || boundary.stopRequested) {
           stopped = true;
@@ -542,11 +575,20 @@ export const directShotFn = inngest.createFunction(
           break;
         }
 
+        // Second stop-flag read between assess and act — shrinks the window
+        // where a user's stop would still let a paid act step start.
+        const preAct = await getRunById(runId);
+        if (!preAct || preAct.stopRequested) {
+          stopped = true;
+          break;
+        }
+
         const acted = await step.run(`act-${i}`, () =>
-          runActStep(anthropic, project, shot, runId, scratch, scratchImageEdited, assessed),
+          runActStep(anthropic, project, shot, runId, i, scratch, scratchImageEdited, assessed),
         );
         scratch = acted.scratch;
         scratchImageEdited = acted.scratchImageEdited;
+        if (acted.budgetRefusalSeen) budgetRefusalSeen = true;
 
         if (acted.finishCalled) {
           finishResult = acted.finishCalled;
@@ -565,7 +607,9 @@ export const directShotFn = inngest.createFunction(
         }
       }
 
-      await step.run("finalize", () => finalizeRun(runId, scratch, scratchImageEdited, { finishResult, stuckNote, stopped }));
+      await step.run("finalize", () =>
+        finalizeRun(runId, scratch, scratchImageEdited, { finishResult, stuckNote, stopped, budgetRefusalSeen }),
+      );
       return { runId, status: stopped ? "stopped" : "awaiting_approval" };
     } catch (err) {
       await step.run("fail", () => failRun(runId, err));
