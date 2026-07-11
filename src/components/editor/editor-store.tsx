@@ -57,18 +57,45 @@ export interface EditorShot {
   clipUrl: string | null;
   clipDurationSeconds: number | null;
   clipModel: string | null;
-  chainToNext: boolean;
+  // ── Directing controls (Task 5/7/8) ──
+  cameraMove: string | null;
+  cameraStrength: string | null;
+  // "free" (model decides) | "next" (ends on the next shot's image) |
+  // "custom" (ends on an authored end frame). Supersedes the legacy
+  // boolean chain-to-next flag, which the store no longer reads or writes.
+  endsOn: "free" | "next" | "custom";
+  clipDurationChoice: number | null;
+  negativePrompt: string | null;
+  useEntityRefs: boolean;
+  // Authored custom end frame (endsOn = "custom"); serialized now (Task 8)
+  // though only Stage 3 UI consumes it, to avoid a second serializer pass.
+  endFramePath: string | null;
+  endFrameStatus: string;
+  endFrameInstruction: string | null;
+  endFrameUrl: string | null;
   sfxPath: string | null;
   sfxStatus: string;
   sfxUrl: string | null;
   // Reference Bible tagging (F-16) — populated server-side by page.tsx from
   // the DB column (which defaults to [] there too); always an array here.
   referencedEntityIds: string[];
-  // Client-only (final-review finding #3) — why a requested chain was
-  // skipped on the most recent clip generation. Never persisted: both
-  // server serializers (shots GET route, page.tsx) omit it, so it starts
+  // Client-only — why a requested end frame was skipped on the most
+  // recent clip generation. Never persisted: both server
+  // serializers (shots GET route, page.tsx) omit it, so it starts
   // undefined on load and is only ever set from a generateClip response.
-  chainSkippedReason?: string | null;
+  endFrameSkippedReason?: string | null;
+  // Client-only — whether the most recent clip generation applied the
+  // selected camera move as a best-effort prompt suffix (the model has no
+  // hard camera-control param). Same lifecycle as endFrameSkippedReason.
+  cameraBestEffort?: boolean;
+  // Client-only — how many tagged-entity reference sheets rode into the most
+  // recent clip generation as cast/location refs. Same lifecycle as
+  // cameraBestEffort: cleared at generateClip start, patched from response.
+  refsApplied?: number;
+  // Client-only — why entity references were skipped on the most recent clip
+  // generation ("disabled" | "model-no-references" | "no-ready-sheets").
+  // Same lifecycle as cameraBestEffort.
+  refsSkippedReason?: string | null;
 }
 
 export interface EditorEntity {
@@ -203,6 +230,12 @@ function reducer(state: State, action: Action): State {
 
 interface EditorContextValue {
   projectId: string;
+  // Project-level directing default (Directing Controls task 9) — the
+  // negative-prompt seed shots fall back to when they have no override of
+  // their own (see shot-clip-generation.ts). Edited via the toolbar's
+  // project-settings popover; per-shot fields read it for their placeholder.
+  projectNegativePrompt: string | null;
+  saveProjectSettings(patch: { negativePrompt?: string | null }): Promise<void>;
   beats: EditorBeat[];
   shots: EditorShot[];
   entities: EditorEntity[];
@@ -231,16 +264,24 @@ interface EditorContextValue {
         | "motionPrompt"
         | "referencedEntityIds"
         | "clipModel"
-        | "chainToNext"
+        | "cameraMove"
+        | "cameraStrength"
+        | "endsOn"
+        | "clipDurationChoice"
+        | "negativePrompt"
+        | "useEntityRefs"
       >
     >,
   ): Promise<void>;
   deleteShot(shotId: string): Promise<void>;
   splitShot(shotId: string, atInBeat: number): Promise<void>;
   generateImage(shotId: string): Promise<void>;
+  editShotImage(shotId: string, instruction: string): Promise<boolean>;
   generateClip(shotId: string, model?: string): Promise<void>;
   generateSfx(shotId: string, prompt?: string): Promise<void>;
   removeSfx(shotId: string): Promise<void>;
+  createEndFrame(shotId: string, instruction: string): Promise<void>;
+  removeEndFrame(shotId: string): Promise<void>;
   recommendShots(): Promise<void>;
   recommending: boolean;
   createEntity(
@@ -281,9 +322,17 @@ export function EditorProvider(props: {
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
   initialEntities?: EditorEntity[];
+  initialNegativePrompt?: string | null;
   children: ReactNode;
 }) {
-  const { projectId, initialBeats, initialShots, initialEntities = [], children } = props;
+  const {
+    projectId,
+    initialBeats,
+    initialShots,
+    initialEntities = [],
+    initialNegativePrompt = null,
+    children,
+  } = props;
 
   const [state, dispatch] = useReducer(reducer, undefined, () => ({
     beats: withOffsets(initialBeats),
@@ -294,6 +343,7 @@ export function EditorProvider(props: {
   }));
   const [recommending, setRecommending] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [projectNegativePrompt, setProjectNegativePrompt] = useState(initialNegativePrompt);
 
   const totalDuration = useMemo(() => totalDurationSeconds(state.beats), [state.beats]);
 
@@ -381,7 +431,12 @@ export function EditorProvider(props: {
           | "motionPrompt"
           | "referencedEntityIds"
           | "clipModel"
-          | "chainToNext"
+          | "cameraMove"
+          | "cameraStrength"
+          | "endsOn"
+          | "clipDurationChoice"
+          | "negativePrompt"
+          | "useEntityRefs"
         >
       >,
     ) => {
@@ -511,14 +566,74 @@ export function EditorProvider(props: {
     [projectId],
   );
 
+  // Returns true only on success (createEntity idiom) — the inspector's
+  // inline edit form keeps the typed instruction around on failure so a
+  // failed paid call doesn't wipe the user's text.
+  const editShotImage = useCallback(
+    async (shotId: string, instruction: string): Promise<boolean> => {
+      dispatch({ type: "patchShot", shotId, patch: { imageStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/image/edit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instruction }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] image edit failed:", await res.text());
+          // The route only allows editing when imageStatus was already
+          // "done" with an intact image, and a failed edit never touches
+          // that image — restore "done" (not "failed") so the UI doesn't
+          // show a false failure over a still-good image (mirrors
+          // shot-frame-edit.ts's editShotImage; final-review finding #2).
+          dispatch({ type: "patchShot", shotId, patch: { imageStatus: "done" } });
+          return false;
+        }
+        const data = (await res.json()) as {
+          imagePath: string;
+          imageUrl: string;
+          imageStatus: string;
+        };
+        // Mirror the server (shot-frame-edit.ts's editShotImage): the edit
+        // just changed the image underneath any previously authored end
+        // frame, so flag it stale for re-roll — the route doesn't echo this
+        // decision back, so it's derived here from the current shot state.
+        const hasEndFrame = !!state.shots.find((s) => s.id === shotId)?.endFramePath;
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: {
+            imagePath: data.imagePath,
+            imageUrl: data.imageUrl,
+            imageStatus: "done",
+            ...(hasEndFrame ? { endFrameStatus: "pending" as const } : {}),
+          },
+        });
+        return true;
+      } catch (err) {
+        console.error("[editor-store] image edit error:", err);
+        // Same precondition as the non-ok branch above: restore "done", not
+        // "failed" (final-review finding #2).
+        dispatch({ type: "patchShot", shotId, patch: { imageStatus: "done" } });
+        return false;
+      }
+    },
+    [projectId, state.shots],
+  );
+
   const generateClip = useCallback(
     async (shotId: string, model?: string) => {
-      // Clear any stale reason from a previous generation — a fresh run
-      // may chain successfully, or fail differently.
+      // Clear any stale transients from a previous generation — a fresh run
+      // may chain / apply the camera move successfully, or fail differently.
       dispatch({
         type: "patchShot",
         shotId,
-        patch: { clipStatus: "generating", chainSkippedReason: null },
+        patch: {
+          clipStatus: "generating",
+          endFrameSkippedReason: null,
+          cameraBestEffort: false,
+          refsApplied: 0,
+          refsSkippedReason: null,
+        },
       });
       try {
         const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/clip`, {
@@ -537,10 +652,13 @@ export function EditorProvider(props: {
           clipStatus: string;
           clipDurationSeconds: number;
           clipModel: string;
-          chainSkippedReason?: string;
+          endFrameSkippedReason?: string;
+          cameraBestEffort?: boolean;
+          refsApplied?: number;
+          refsSkippedReason?: string;
         };
-        if (data.chainSkippedReason) {
-          console.warn(`[editor-store] chain skipped: ${data.chainSkippedReason}`);
+        if (data.endFrameSkippedReason) {
+          console.warn(`[editor-store] end frame skipped: ${data.endFrameSkippedReason}`);
         }
         dispatch({
           type: "patchShot",
@@ -555,7 +673,10 @@ export function EditorProvider(props: {
             sfxPath: null,
             sfxStatus: "pending",
             sfxUrl: null,
-            chainSkippedReason: data.chainSkippedReason ?? null,
+            endFrameSkippedReason: data.endFrameSkippedReason ?? null,
+            cameraBestEffort: data.cameraBestEffort ?? false,
+            refsApplied: data.refsApplied ?? 0,
+            refsSkippedReason: data.refsSkippedReason ?? null,
           },
         });
       } catch (err) {
@@ -616,6 +737,78 @@ export function EditorProvider(props: {
     [projectId],
   );
 
+  const createEndFrame = useCallback(
+    async (shotId: string, instruction: string) => {
+      dispatch({ type: "patchShot", shotId, patch: { endFrameStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/end-frame`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instruction }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] end frame creation failed:", await res.text());
+          dispatch({ type: "patchShot", shotId, patch: { endFrameStatus: "failed" } });
+          return;
+        }
+        const data = (await res.json()) as { endFramePath: string; endFrameUrl: string };
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: {
+            endFramePath: data.endFramePath,
+            endFrameUrl: data.endFrameUrl,
+            endFrameStatus: "done",
+            // The route doesn't echo the instruction back in its response —
+            // persist what was sent, matching what createShotEndFrame wrote
+            // to the DB (shot-frame-edit.ts).
+            endFrameInstruction: instruction,
+          },
+        });
+      } catch (err) {
+        console.error("[editor-store] end frame creation error:", err);
+        dispatch({ type: "patchShot", shotId, patch: { endFrameStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const removeEndFrame = useCallback(
+    async (shotId: string) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/end-frame`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] end frame removal failed:", await res.text());
+          return;
+        }
+        const data = (await res.json()) as {
+          endFramePath: null;
+          endFrameInstruction: null;
+          endFrameStatus: string;
+          endsOn: "free" | "next" | "custom";
+        };
+        // Response is authoritative for endsOn too — the route flips it back
+        // to "free" when it was "custom" (DELETE semantics, end-frame route).
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: {
+            endFramePath: data.endFramePath,
+            endFrameUrl: null,
+            endFrameInstruction: data.endFrameInstruction,
+            endFrameStatus: data.endFrameStatus,
+            endsOn: data.endsOn,
+          },
+        });
+      } catch (err) {
+        console.error("[editor-store] end frame removal error:", err);
+      }
+    },
+    [projectId],
+  );
+
   const recommendShots = useCallback(async () => {
     setRecommending(true);
     try {
@@ -628,7 +821,13 @@ export function EditorProvider(props: {
       }
       const data = (await res.json()) as { shots: EditorShot[] };
       // The recommend response rows are raw DB fields — no presigned URLs.
-      const shots = data.shots.map((s) => ({ ...s, imageUrl: null, clipUrl: null, sfxUrl: null }));
+      const shots = data.shots.map((s) => ({
+        ...s,
+        imageUrl: null,
+        clipUrl: null,
+        sfxUrl: null,
+        endFrameUrl: null,
+      }));
       dispatch({ type: "setShots", shots });
     } catch (err) {
       console.error("[editor-store] recommend shots fetch failed:", err);
@@ -636,6 +835,37 @@ export function EditorProvider(props: {
       setRecommending(false);
     }
   }, [projectId]);
+
+  // ── Project-level mutations (Directing Controls task 9) ──
+  // Optimistic-patch-then-revert, same idiom as updateShot/updateEntity —
+  // only negativePrompt is settable today, but the patch shape leaves room
+  // for future project-settings fields without a new helper.
+  const saveProjectSettings = useCallback(
+    async (patch: { negativePrompt?: string | null }) => {
+      const prev = projectNegativePrompt;
+      if (patch.negativePrompt !== undefined) setProjectNegativePrompt(patch.negativePrompt);
+      try {
+        const res = await fetch(`/api/projects/${projectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] save project settings failed:", await res.text());
+          if (patch.negativePrompt !== undefined) setProjectNegativePrompt(prev);
+          return;
+        }
+        const updated = (await res.json()) as { negativePrompt?: string | null };
+        if (patch.negativePrompt !== undefined) {
+          setProjectNegativePrompt(updated.negativePrompt ?? null);
+        }
+      } catch (err) {
+        console.error("[editor-store] save project settings error:", err);
+        if (patch.negativePrompt !== undefined) setProjectNegativePrompt(prev);
+      }
+    },
+    [projectId, projectNegativePrompt],
+  );
 
   // ── Entity mutations ──
 
@@ -908,7 +1138,10 @@ export function EditorProvider(props: {
               clipUrl: f.clipUrl,
               clipDurationSeconds: f.clipDurationSeconds,
               clipModel: f.clipModel,
-              chainToNext: f.chainToNext,
+              endsOn: f.endsOn,
+              endFramePath: f.endFramePath,
+              endFrameStatus: f.endFrameStatus,
+              endFrameUrl: f.endFrameUrl,
               sfxPath: f.sfxPath,
               sfxStatus: f.sfxStatus,
               sfxUrl: f.sfxUrl,
@@ -953,6 +1186,8 @@ export function EditorProvider(props: {
 
   const value: EditorContextValue = {
     projectId,
+    projectNegativePrompt,
+    saveProjectSettings,
     beats: state.beats,
     shots: state.shots,
     entities: state.entities,
@@ -967,9 +1202,12 @@ export function EditorProvider(props: {
     deleteShot,
     splitShot,
     generateImage,
+    editShotImage,
     generateClip,
     generateSfx,
     removeSfx,
+    createEndFrame,
+    removeEndFrame,
     recommendShots,
     recommending,
     createEntity,
@@ -1059,7 +1297,17 @@ export function entityShotCount(entityId: string, shots: EditorShot[]): number {
   return shots.filter((s) => s.referencedEntityIds.includes(entityId)).length;
 }
 
-/** Every entity tagged onto a shot, in entity-list order. */
+/**
+ * Every entity tagged onto a shot, in TAG order (referencedEntityIds), not
+ * entity-list order — must mirror the server's loadTaggedEntities
+ * (shot-clip-generation.ts): tag order decides which sheets survive the
+ * first-4 reference cap, so any list derived from this (e.g. the "Cast &
+ * locations featured" names) reflects what actually rides into the clip.
+ * Unknown ids (entity deleted, stale tag) are dropped.
+ */
 export function entitiesOfShot(shot: EditorShot, entities: EditorEntity[]): EditorEntity[] {
-  return entities.filter((e) => shot.referencedEntityIds.includes(e.id));
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  return (shot.referencedEntityIds ?? [])
+    .map((id) => byId.get(id))
+    .filter((e): e is EditorEntity => e !== undefined);
 }

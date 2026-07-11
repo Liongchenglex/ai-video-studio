@@ -118,6 +118,9 @@ export const projects = pgTable(
     styleString: text("style_string"),
     styleRefPaths: jsonb("style_ref_paths").$type<string[]>(),
     stylePreviewPath: text("style_preview_path"),
+    // Project-wide default negative prompt. Nullable = unset; seeded
+    // client-side for new projects (Directing controls, Task 5).
+    negativePrompt: text("negative_prompt"),
 
     // ── Video brief (F-03) ──
     brief: text("brief"),
@@ -197,15 +200,40 @@ export const shots = pgTable(
     // Model id from the clip-models registry used for the current clip;
     // also the shot's sticky dropdown selection. Null = registry default.
     clipModel: text("clip_model"),
-    // "This clip should end at the next shot's image" (first/last-frame
-    // conditioning). Honored only by models with supportsEndFrame.
-    chainToNext: boolean("chain_to_next").default(false).notNull(),
 
     // ── SFX (Clip Engine v2) ──
     // MMAudio variant (clip-sfx.mp4). Decoupled from clipStatus; reset
     // whenever the clip itself is regenerated.
     sfxPath: text("sfx_path"),
     sfxStatus: generationStatusEnum("sfx_status").default("pending"),
+
+    // ── Directing controls: camera (Task 5) ──
+    // Camera move applied to the clip. Null = camera comes from the prompt
+    // (no explicit override).
+    cameraMove: text("camera_move"),
+    // Strength of the camera move above: 'subtle' | 'medium' | 'strong'.
+    cameraStrength: text("camera_strength"),
+
+    // ── Directing controls: end frame (Task 5) ──
+    // How this shot's clip ends: 'free' (model decides), 'next' (ends on
+    // the next shot's image), or 'custom' (ends on an authored end frame).
+    // Superseded and replaced the legacy chain_to_next boolean (backfilled
+    // chain_to_next=true -> 'next' before the column was dropped).
+    endsOn: text("ends_on").default("free").notNull(),
+    // R2 key of the authored custom end frame (endsOn = 'custom').
+    endFramePath: text("end_frame_path"),
+    endFrameStatus: generationStatusEnum("end_frame_status").default("pending"),
+    // Instruction used to generate the end frame; kept around for re-rolls.
+    endFrameInstruction: text("end_frame_instruction"),
+
+    // ── Directing controls: duration + negative prompt + refs (Task 5) ──
+    // Explicit clip duration in seconds. Null = auto-match the shot's slot.
+    clipDurationChoice: integer("clip_duration_choice"),
+    // Per-shot override of the project's default negative prompt.
+    negativePrompt: text("negative_prompt"),
+    // "Cast & locations featured" — whether entity reference images are
+    // used to condition generation for this shot.
+    useEntityRefs: boolean("use_entity_refs").default(true).notNull(),
 
     // ── v4.0: beat membership + sub-beat offsets ──
     // beatId is nullable during the additive migration; backfilled later.

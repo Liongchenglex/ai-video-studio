@@ -6,7 +6,9 @@
  * whose clip should end on the next shot's still — gated on includeClips,
  * the suggestChains flag, the selected model supporting end frames, and
  * this run actually having clip targets, so it never fires a paid Haiku
- * call or flips chainToNext when chaining couldn't affect this run),
+ * call or flips endsOn when chaining couldn't affect this run; the DB
+ * write itself only ever upgrades shots still at endsOn="free", so it can
+ * never clobber a user-authored "custom" end frame or an explicit "free"),
  * 3) clips (only when includeClips, only for shots whose image is done,
  * threading the selected clip model), 4) optional SFX for shots whose clip
  * just finished. Each item
@@ -171,10 +173,18 @@ export const generateBatchFn = inngest.createFunction(
         // input — sortOrder alone is unreliable (final-review finding #1).
         const orderedShotRows = orderShotsByTimeline(shotRows, beatRows);
         const ids = await suggestChains(orderedShotRows, project?.brief ?? null);
-        if (ids.length > 0) {
-          await db.update(shots).set({ chainToNext: true }).where(inArray(shots.id, ids));
-        }
-        return ids.length;
+        if (ids.length === 0) return 0;
+        // Suggestions only ever upgrade undirected shots (endsOn "free") —
+        // never overwrite a user-authored "custom" end frame or an explicit
+        // "free" the user already chose on purpose (final-review finding #1).
+        // .returning() so the applied-count reflects rows actually touched,
+        // not just how many ids were proposed.
+        const updated = await db
+          .update(shots)
+          .set({ endsOn: "next" })
+          .where(and(inArray(shots.id, ids), eq(shots.endsOn, "free")))
+          .returning({ id: shots.id });
+        return updated.length;
       });
     }
 

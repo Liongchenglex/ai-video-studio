@@ -15,12 +15,14 @@ function round2(n: number): number {
 
 export function estimateBatchCost(
   counts: { sheets: number; images: number; clips: number; sfx?: number },
-  opts?: { clipModelId?: string; includeSfx?: boolean },
+  opts?: { clipModelId?: string; includeSfx?: boolean; clipSecondsTotal?: number },
 ) {
   const clipModel = getClipModel(opts?.clipModelId) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
   const sheetsUsd = round2(counts.sheets * SHEET_EST_USD);
   const imagesUsd = round2(counts.images * IMAGE_EST_USD);
-  const clipsUsd = round2(counts.clips * clipModel.estUsdPerClip);
+  // Price clips by total seconds if provided, otherwise by count × default duration
+  const clipSecondsForEstimate = opts?.clipSecondsTotal ?? counts.clips * clipModel.durationSeconds;
+  const clipsUsd = round2(clipSecondsForEstimate * clipModel.estUsdPerSecond);
   // sfx count may exceed clips: already-done clips missing SFX are targeted too.
   const sfxUsd = opts?.includeSfx ? round2((counts.sfx ?? counts.clips) * SFX_EST_USD) : 0;
   return {

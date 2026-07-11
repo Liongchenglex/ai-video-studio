@@ -71,7 +71,16 @@ export default async function ProjectPage({
       clipUrl: shot.clipPath ? await getDownloadUrl(shot.clipPath) : null,
       clipDurationSeconds: shot.clipDurationSeconds,
       clipModel: shot.clipModel,
-      chainToNext: shot.chainToNext,
+      cameraMove: shot.cameraMove,
+      cameraStrength: shot.cameraStrength,
+      endsOn: (shot.endsOn ?? "free") as EditorShot["endsOn"],
+      clipDurationChoice: shot.clipDurationChoice,
+      negativePrompt: shot.negativePrompt,
+      useEntityRefs: shot.useEntityRefs,
+      endFramePath: shot.endFramePath,
+      endFrameStatus: shot.endFrameStatus ?? "pending",
+      endFrameInstruction: shot.endFrameInstruction,
+      endFrameUrl: shot.endFramePath ? await getDownloadUrl(shot.endFramePath) : null,
       sfxPath: shot.sfxPath,
       sfxStatus: shot.sfxStatus ?? "pending",
       sfxUrl: shot.sfxPath ? await getDownloadUrl(shot.sfxPath) : null,
@@ -157,6 +166,7 @@ export default async function ProjectPage({
           tone: project.tone ?? "educational",
           script: project.script,
           voiceId: project.voiceId || "21m00Tcm4TlvDq8ikWAM",
+          negativePrompt: project.negativePrompt,
         }}
         initialBeats={initialBeats}
         initialShots={initialShots}

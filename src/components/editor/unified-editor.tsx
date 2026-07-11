@@ -30,10 +30,19 @@ import {
   Mic,
   LayoutList,
   LayoutGrid,
+  Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { VoiceSelector } from "@/components/voice-selector";
 import {
   EditorProvider,
@@ -60,8 +69,15 @@ interface UnifiedEditorProps {
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
   initialEntities: EditorEntity[];
+  /** Project-level negative-prompt default (Directing Controls task 9). */
+  negativePrompt: string | null;
   onVoiceChange: (voiceId: string) => void;
 }
+
+// Seed for an empty project negative prompt — the toolbar popover's
+// placeholder and its "use suggested" fill (Global Constraints copy list).
+const SUGGESTED_NEGATIVE_PROMPT =
+  "blur, warping, morphing, distorted faces, extra limbs, text artifacts";
 
 function formatClock(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
@@ -78,6 +94,7 @@ export function UnifiedEditor({
   initialBeats,
   initialShots,
   initialEntities,
+  negativePrompt,
   onVoiceChange,
 }: UnifiedEditorProps) {
   const [script, setScript] = useState(initialScript ?? "");
@@ -175,6 +192,7 @@ export function UnifiedEditor({
       initialBeats={beats}
       initialShots={initialShots}
       initialEntities={initialEntities}
+      initialNegativePrompt={negativePrompt}
     >
       <EditorShell voiceId={voiceId} onVoiceChange={onVoiceChange} />
     </EditorProvider>
@@ -439,6 +457,7 @@ function EditorShell({
   } = useEditor();
   const { playing, playheadSeconds, play, pause, seek } = useBeatPlayback(beats);
   const [generateAllOpen, setGenerateAllOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Rows still in flight for the running batch: generating reference sheets,
   // plus shots whose image is generating|pending (pending ones will still be
@@ -542,8 +561,10 @@ function EditorShell({
         batchActive={batchActive}
         batchRemaining={batchRemaining}
         onGenerateAll={() => setGenerateAllOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <GenerateAllDialog open={generateAllOpen} onOpenChange={setGenerateAllOpen} />
+      <ProjectSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       <div className="flex gap-4">
         <ReferenceBiblePanel />
@@ -631,6 +652,7 @@ function TopBar({
   batchActive,
   batchRemaining,
   onGenerateAll,
+  onOpenSettings,
 }: {
   beatCount: number;
   shotCount: number;
@@ -646,6 +668,7 @@ function TopBar({
   batchActive: boolean;
   batchRemaining: number;
   onGenerateAll: () => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3 rounded border bg-muted/20 p-2">
@@ -722,7 +745,90 @@ function TopBar({
             </>
           )}
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onOpenSettings}
+          title="Project settings — negative-prompt default for clips"
+        >
+          <Settings className="h-3.5 w-3.5" />
+        </Button>
       </div>
     </div>
+  );
+}
+
+// ─── Project settings popover (gear icon) ─────────────────────────────
+
+function ProjectSettingsDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { projectNegativePrompt, saveProjectSettings } = useEditor();
+  const [draft, setDraft] = useState(projectNegativePrompt ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Resync the draft to the store's current value every time the popover
+  // opens, so a stale edit from a previous open (never saved) doesn't linger.
+  useEffect(() => {
+    if (open) setDraft(projectNegativePrompt ?? "");
+  }, [open, projectNegativePrompt]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await saveProjectSettings({ negativePrompt: draft.trim() || null });
+      onOpenChange(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Project settings</DialogTitle>
+          <DialogDescription>
+            The project default applies to every clip whose shot doesn&rsquo;t set its own
+            negative prompt (Advanced ▸ in the inspector).
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-medium text-muted-foreground">
+              Negative prompt (project default)
+            </label>
+            <button
+              type="button"
+              onClick={() => setDraft(SUGGESTED_NEGATIVE_PROMPT)}
+              className="text-[11px] text-muted-foreground underline underline-offset-2 transition hover:text-foreground"
+            >
+              use suggested
+            </button>
+          </div>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            maxLength={500}
+            rows={3}
+            placeholder={SUGGESTED_NEGATIVE_PROMPT}
+            className="w-full rounded border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

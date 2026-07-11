@@ -1,6 +1,8 @@
 /**
  * PATCH  /api/projects/[id]/shots/[shotId] — update bounds, prompts, the
- *        tagged reference-bible entities, clip model, and/or chain-to-next
+ *        tagged reference-bible entities, clip model, and/or directing
+ *        controls (camera, end-frame chaining, duration, negative prompt,
+ *        entity-ref usage)
  * DELETE /api/projects/[id]/shots/[shotId] — remove a shot
  *
  * PATCH validates bounds against the anchor-beat spillover model: the shot
@@ -11,11 +13,14 @@
  * independently of bounds/prompts: at most 8 UUIDs, every id must belong to
  * an entity in this same project (cross-table authorization).
  *
- * `chainToNext` (boolean) enables or disables video-to-video chaining to the
- * next shot (only when using a model that supports end-frame input).
- *
  * `clipModel` (ClipModelId | null) selects which fal.ai model to use, or null
  * to reset to the registry default (Clip Engine v2).
+ *
+ * Directing controls (Task 8): `cameraMove`/`cameraStrength` (allow-listed
+ * enums or null), `endsOn` ("free" | "next" | "custom" — supersedes the
+ * legacy boolean chain-to-next flag, which this route no longer accepts),
+ * `clipDurationChoice` (integer seconds 1–15, or null to auto-match),
+ * `negativePrompt` (string ≤500 chars, or null), `useEntityRefs` (boolean).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -33,6 +38,9 @@ import {
 import { MIN_SHOT_SECONDS, shotAbsoluteRange } from "@/lib/shot-beat-mapping";
 import { computeBeatOffsets, totalDurationSeconds } from "@/lib/beat-timing";
 import { isClipModelId } from "@/lib/clip-models";
+import { isCameraMove, isCameraStrength } from "@/lib/clip-camera";
+
+const VALID_ENDS_ON = ["free", "next", "custom"] as const;
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
 
@@ -84,8 +92,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     imagePrompt: string;
     motionPrompt: string;
     referencedEntityIds: string[];
-    chainToNext: boolean;
     clipModel: string | null;
+    cameraMove: string | null;
+    cameraStrength: string | null;
+    endsOn: string;
+    clipDurationChoice: number | null;
+    negativePrompt: string | null;
+    useEntityRefs: boolean;
   }>;
 
   const updates: Record<string, unknown> = {};
@@ -190,19 +203,62 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     updates.referencedEntityIds = ids;
   }
 
-  if (body.chainToNext !== undefined) {
-    if (typeof body.chainToNext !== "boolean") {
-      return badRequestResponse("chainToNext must be a boolean");
-    }
-    updates.chainToNext = body.chainToNext;
-  }
-
   if (body.clipModel !== undefined) {
     // null clears the selection back to the registry default
     if (body.clipModel !== null && !isClipModelId(body.clipModel)) {
       return badRequestResponse("Unknown clip model");
     }
     updates.clipModel = body.clipModel;
+  }
+
+  if (body.cameraMove !== undefined) {
+    if (body.cameraMove !== null && !isCameraMove(body.cameraMove)) {
+      return badRequestResponse("Unknown camera move");
+    }
+    updates.cameraMove = body.cameraMove;
+  }
+
+  if (body.cameraStrength !== undefined) {
+    if (body.cameraStrength !== null && !isCameraStrength(body.cameraStrength)) {
+      return badRequestResponse("Unknown camera strength");
+    }
+    updates.cameraStrength = body.cameraStrength;
+  }
+
+  if (body.endsOn !== undefined) {
+    if (!VALID_ENDS_ON.includes(body.endsOn as typeof VALID_ENDS_ON[number])) {
+      return badRequestResponse(`endsOn must be one of: ${VALID_ENDS_ON.join(", ")}`);
+    }
+    updates.endsOn = body.endsOn;
+  }
+
+  if (body.clipDurationChoice !== undefined) {
+    if (
+      body.clipDurationChoice !== null &&
+      !(Number.isInteger(body.clipDurationChoice) && body.clipDurationChoice >= 1 && body.clipDurationChoice <= 15)
+    ) {
+      return badRequestResponse("clipDurationChoice must be an integer between 1 and 15, or null");
+    }
+    updates.clipDurationChoice = body.clipDurationChoice;
+  }
+
+  if (body.negativePrompt !== undefined) {
+    if (
+      body.negativePrompt !== null &&
+      !(typeof body.negativePrompt === "string" && body.negativePrompt.length <= 500)
+    ) {
+      return badRequestResponse("negativePrompt must be a string of at most 500 characters, or null");
+    }
+    // Normalize an empty/whitespace-only string to null, matching the
+    // topic/brief idiom, so the UI can persist "cleared" consistently.
+    updates.negativePrompt = body.negativePrompt?.trim() || null;
+  }
+
+  if (body.useEntityRefs !== undefined) {
+    if (typeof body.useEntityRefs !== "boolean") {
+      return badRequestResponse("useEntityRefs must be a boolean");
+    }
+    updates.useEntityRefs = body.useEntityRefs;
   }
 
   if (Object.keys(updates).length === 0) {

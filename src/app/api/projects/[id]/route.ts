@@ -1,7 +1,8 @@
 /**
  * API routes for a single project.
  * GET    /api/projects/[id] — get project details (owner only)
- * PATCH  /api/projects/[id] — update project name/topic/status (owner only)
+ * PATCH  /api/projects/[id] — update project name/topic/status/negativePrompt
+ *        (owner only)
  * DELETE /api/projects/[id] — soft-delete project (owner only)
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -69,7 +70,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (error === "forbidden") return forbiddenResponse();
   if (project!.deletedAt) return notFoundResponse();
 
-  let body: { name?: string; topic?: string; status?: string; brief?: string; targetDuration?: number; tone?: string; voiceId?: string; script?: string };
+  let body: {
+    name?: string;
+    topic?: string;
+    status?: string;
+    brief?: string;
+    targetDuration?: number;
+    tone?: string;
+    voiceId?: string;
+    script?: string;
+    negativePrompt?: string | null;
+  };
   try {
     body = await request.json();
   } catch {
@@ -170,6 +181,21 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Script too long (50000 char max)" }, { status: 400 });
     }
     updates.script = body.script;
+  }
+
+  if (body.negativePrompt !== undefined) {
+    if (
+      body.negativePrompt !== null &&
+      !(typeof body.negativePrompt === "string" && body.negativePrompt.length <= 500)
+    ) {
+      return NextResponse.json(
+        { error: "negativePrompt must be a string of at most 500 characters, or null" },
+        { status: 400 },
+      );
+    }
+    // Normalize an empty/whitespace-only string to null, matching the
+    // topic/brief idiom above, so the UI can persist "cleared" consistently.
+    updates.negativePrompt = body.negativePrompt?.trim() || null;
   }
 
   if (Object.keys(updates).length === 0) {

@@ -16,7 +16,7 @@
  */
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import {
   Trash2,
   Scissors,
@@ -34,12 +34,20 @@ import {
   TextCursorInput,
   Music,
   X,
+  Wand2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { VoiceSelector } from "@/components/voice-selector";
-import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, getClipModel } from "@/lib/clip-models";
+import {
+  CLIP_MODELS,
+  DEFAULT_CLIP_MODEL_ID,
+  estClipUsd,
+  getClipModel,
+  resolveClipDuration,
+} from "@/lib/clip-models";
+import { CAMERA_MOVES } from "@/lib/clip-camera";
 import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
 import {
   useEditor,
@@ -58,13 +66,28 @@ const ENTITY_TYPE_ICON: Record<EditorEntity["type"], LucideIcon> = {
   object: Box,
 };
 
-// Copy for a skipped chain (final-review finding #3). "not-requested" is
-// omitted on purpose — the note only renders when shot.chainToNext is true,
-// so a request that was never made can never surface here.
-const CHAIN_SKIPPED_COPY: Record<string, string> = {
-  "model-no-end-frame": "Chain skipped — this model can't take an end frame",
-  "no-next-shot": "Chain skipped — no next shot",
-  "next-image-not-ready": "Chain skipped — the next shot's image wasn't ready",
+// Copy for a skipped end frame under the "Ends on" control (Directing
+// Controls task 9; renamed from CHAIN_SKIPPED_COPY — "chain" was the old
+// checkbox's vocabulary, "Ends on" is the new one). "not-requested" is
+// omitted on purpose — the note only renders when shot.endsOn !== "free",
+// so a request that was never made can never surface here. custom-frame's
+// copy is included even though this task's UI can only reach "next" (Task
+// 14 adds the "Custom…" segment) — a shot's stored endsOn could already be
+// "custom" from a future rollback/replay, and the note must still read right.
+const END_SKIPPED_COPY: Record<string, string> = {
+  "model-no-end-frame": "Skipped — this model can't take an end frame",
+  "no-next-shot": "Skipped — no next shot",
+  "next-image-not-ready": "Skipped — the next shot's image wasn't ready",
+  "custom-frame-not-ready": "Skipped — the custom end frame wasn't ready",
+};
+
+// Copy for the post-generation "Cast refs skipped — …" note under the Clip
+// group (Directing Controls task 13). Mirrors END_SKIPPED_COPY's shape —
+// keyed by the server's RefsSkipReason (src/lib/clip-references.ts).
+const REFS_SKIPPED_COPY: Record<string, string> = {
+  disabled: "featured toggle is off",
+  "model-no-references": "this model can't take references",
+  "no-ready-sheets": "no tagged entity has a finished sheet",
 };
 
 const MIN_HALF = 0.25; // seconds — mirror the server split guard
@@ -306,6 +329,20 @@ function spanLabel(spanned: EditorBeat[]): string {
   return first === last ? `beat ${first}` : `beats ${first}–${last}`;
 }
 
+// The four locked groups of the v3 shot inspector (spec: inspector-layout-v3
+// mockup, left panel) — Image / Action / Clip / Sound. A thin visual wrapper
+// only; every field inside keeps its existing handler and persistence.
+function InspectorGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2 rounded-md border border-dashed p-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      {children}
+    </div>
+  );
+}
+
 function ShotEditPanel({
   shot,
   beat,
@@ -317,6 +354,7 @@ function ShotEditPanel({
 }) {
   const {
     projectId,
+    projectNegativePrompt,
     beats,
     entities,
     shots,
@@ -324,9 +362,12 @@ function ShotEditPanel({
     deleteShot,
     splitShot,
     generateImage,
+    editShotImage,
     generateClip,
     generateSfx,
     removeSfx,
+    createEndFrame,
+    removeEndFrame,
     tagShot,
   } = useEditor();
   // Narration under the shot's time range — the concatenated text of every
@@ -336,6 +377,7 @@ function ShotEditPanel({
 
   const [imagePrompt, setImagePrompt] = useState(shot.imagePrompt);
   const [motionPrompt, setMotionPrompt] = useState(shot.motionPrompt);
+  const [negativePromptDraft, setNegativePromptDraft] = useState(shot.negativePrompt ?? "");
   const [suggestingImage, setSuggestingImage] = useState(false);
   const [suggestingMotion, setSuggestingMotion] = useState(false);
 
@@ -350,6 +392,18 @@ function ShotEditPanel({
   // the shot's saved model on mount / when the selection moves to another shot.
   const [clipModelId, setClipModelId] = useState(shot.clipModel ?? DEFAULT_CLIP_MODEL_ID);
   const [sfxPrompt, setSfxPrompt] = useState("");
+  // Edit-image inline form (Directing Controls task 15) — a toggled
+  // instruction input under the Image group, separate from the image
+  // prompt textarea: this edits the EXISTING image in place via Kontext
+  // rather than regenerating from the prompt.
+  const [showEditImage, setShowEditImage] = useState(false);
+  const [editImageInstruction, setEditImageInstruction] = useState("");
+  // Custom end frame instruction draft — prefilled from the shot's
+  // persisted endFrameInstruction so re-opening the panel shows the last
+  // instruction used, editable before a re-create.
+  const [endFrameInstructionDraft, setEndFrameInstructionDraft] = useState(
+    shot.endFrameInstruction ?? "",
+  );
   const selectedModel = getClipModel(clipModelId) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
   // Timeline order, not sortOrder (final-review finding #1) — EditorBeat
   // already carries `sortOrder` (its position on the timeline; the reducer
@@ -366,10 +420,26 @@ function ShotEditPanel({
       ? "Last shot — nothing to chain into"
       : null;
 
+  // Length (Directing Controls task 9): the model's resolved duration —
+  // explicit choice wins, else nearest to the shot's timeline slot, else the
+  // model default. Mirrors the server's own resolveClipDuration call in
+  // shot-clip-generation.ts, so the estimate and the stepper never lie about
+  // what a Generate click will actually produce.
+  const slotSeconds =
+    shot.startInBeat != null && shot.endInBeat != null ? shot.endInBeat - shot.startInBeat : null;
+  const resolvedDuration = resolveClipDuration(selectedModel, slotSeconds, shot.clipDurationChoice ?? null);
+  const durationIndex = selectedModel.durations.indexOf(resolvedDuration);
+  const stepDuration = (delta: number) => {
+    const idx = durationIndex + delta;
+    if (idx < 0 || idx >= selectedModel.durations.length) return;
+    updateShot(shot.id, { clipDurationChoice: selectedModel.durations[idx] });
+  };
+
   useEffect(() => {
     setImagePrompt(shot.imagePrompt);
     setMotionPrompt(shot.motionPrompt);
-  }, [shot.id, shot.imagePrompt, shot.motionPrompt]);
+    setNegativePromptDraft(shot.negativePrompt ?? "");
+  }, [shot.id, shot.imagePrompt, shot.motionPrompt, shot.negativePrompt]);
 
   useEffect(() => {
     setClipModelId(shot.clipModel ?? DEFAULT_CLIP_MODEL_ID);
@@ -381,6 +451,20 @@ function ShotEditPanel({
   useEffect(() => {
     setSfxPrompt("");
   }, [shot.id]);
+
+  // Selection moved to another shot — collapse the edit-image form and drop
+  // any unsent draft instead of leaking it onto the newly selected shot.
+  useEffect(() => {
+    setShowEditImage(false);
+    setEditImageInstruction("");
+  }, [shot.id]);
+
+  // Keep the end-frame instruction draft in sync with what's actually
+  // persisted (selection change, or a create/re-create/remove landing) —
+  // NOT on every render, so mid-typing edits before a re-create survive.
+  useEffect(() => {
+    setEndFrameInstructionDraft(shot.endFrameInstruction ?? "");
+  }, [shot.id, shot.endFrameInstruction]);
 
   const prevImageUrl = useRef(shot.imageUrl);
   const prevClipUrl = useRef(shot.clipUrl);
@@ -467,6 +551,15 @@ function ShotEditPanel({
     } finally {
       setSuggestingMotion(false);
     }
+  };
+
+  const handleEditImage = async () => {
+    const trimmed = editImageInstruction.trim();
+    if (!trimmed) return;
+    // Clear only on success — a failed paid call keeps the typed
+    // instruction so the user can retry or tweak it.
+    const ok = await editShotImage(shot.id, trimmed);
+    if (ok) setEditImageInstruction("");
   };
 
   const hasImage = !!shot.imageUrl;
@@ -644,80 +737,44 @@ function ShotEditPanel({
           <p className="text-[10px] leading-4 text-muted-foreground">
             {taggedEntities.length > 0 && !hasReadyReference
               ? "no reference sheet yet — Generate one in the rail to condition this shot"
-              : "★ primary (its sheet conditions the image) · click a chip to tag/untag · the small icon inserts the name into the prompt"}
+              : "★ primary · sheets condition the image and the clip · click a chip to tag/untag · the small icon inserts the name into the prompt"}
           </p>
         </div>
       )}
 
-      <div className="space-y-1">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Image prompt
-          </p>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 text-[10px]"
-            onClick={aiSuggestImage}
-            disabled={suggestingImage || !voText}
-          >
-            {suggestingImage ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Sparkles className="h-3 w-3" />
-            )}
-            <span className="ml-1">AI suggest</span>
-          </Button>
+      <InspectorGroup label="Image — what we see">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Image prompt
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 text-[10px]"
+              onClick={aiSuggestImage}
+              disabled={suggestingImage || !voText}
+            >
+              {suggestingImage ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Sparkles className="h-3 w-3" />
+              )}
+              <span className="ml-1">AI suggest</span>
+            </Button>
+          </div>
+          <textarea
+            value={imagePrompt}
+            onChange={(e) => setImagePrompt(e.target.value)}
+            onBlur={persistIfChanged}
+            rows={4}
+            className="w-full rounded border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          />
         </div>
-        <textarea
-          value={imagePrompt}
-          onChange={(e) => setImagePrompt(e.target.value)}
-          onBlur={persistIfChanged}
-          rows={4}
-          className="w-full rounded border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Motion prompt
-          </p>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 text-[10px]"
-            onClick={aiSuggestMotion}
-            disabled={suggestingMotion || !voText || !imagePrompt.trim()}
-            title={
-              !imagePrompt.trim()
-                ? "Write an image prompt first — motion suggestions need it"
-                : "AI suggest motion"
-            }
-          >
-            {suggestingMotion ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Sparkles className="h-3 w-3" />
-            )}
-            <span className="ml-1">AI suggest</span>
-          </Button>
-        </div>
-        <textarea
-          value={motionPrompt}
-          onChange={(e) => setMotionPrompt(e.target.value)}
-          onBlur={persistIfChanged}
-          rows={2}
-          className="w-full rounded border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-        />
-      </div>
-
-      {/* Asset generation */}
-      <div className="flex gap-2 pt-1">
         <Button
           size="sm"
           variant="default"
-          className="flex-1"
+          className="w-full"
           onClick={() => generateImage(shot.id)}
           disabled={shot.imageStatus === "generating"}
           title={shot.imagePath ? "Regenerate image" : "Generate image"}
@@ -729,16 +786,380 @@ function ShotEditPanel({
           )}
           {shot.imagePath ? "Re-image" : "Image"}
         </Button>
+        {shot.imageStatus === "failed" && (
+          <p className="text-[10px] text-destructive">Image generation failed. Retry above.</p>
+        )}
+        {shot.imagePath && (
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => setShowEditImage((v) => !v)}
+              className="text-[10px] text-muted-foreground underline underline-offset-2 transition hover:text-foreground"
+            >
+              {showEditImage ? "Hide edit image" : "Edit image…"}
+            </button>
+            {showEditImage && (
+              <div className="flex gap-2">
+                <input
+                  value={editImageInstruction}
+                  onChange={(e) => setEditImageInstruction(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe the edit, e.g. 'make the sky sunset orange'"
+                  className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleEditImage}
+                  disabled={!editImageInstruction.trim() || shot.imageStatus === "generating"}
+                  title="Edit the current image in place via FLUX Kontext — overwrites it"
+                >
+                  {shot.imageStatus === "generating" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="mr-1 h-3 w-3" />
+                  )}
+                  Apply
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </InspectorGroup>
+
+      <InspectorGroup label="Action — what happens in the shot">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Motion prompt
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 text-[10px]"
+              onClick={aiSuggestMotion}
+              disabled={suggestingMotion || !voText || !imagePrompt.trim()}
+              title={
+                !imagePrompt.trim()
+                  ? "Write an image prompt first — motion suggestions need it"
+                  : "AI suggest motion"
+              }
+            >
+              {suggestingMotion ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Sparkles className="h-3 w-3" />
+              )}
+              <span className="ml-1">AI suggest</span>
+            </Button>
+          </div>
+          <textarea
+            value={motionPrompt}
+            onChange={(e) => setMotionPrompt(e.target.value)}
+            onBlur={persistIfChanged}
+            rows={2}
+            placeholder={'e.g. "the boat sails toward the horizon"'}
+            className="w-full rounded border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-[10px] text-muted-foreground">Camera move</label>
+            <select
+              value={shot.cameraMove ?? ""}
+              onChange={(e) => {
+                const move = e.target.value;
+                if (move === "") {
+                  // No override — leave camera direction to the prompt as
+                  // written, distinct from "static" (an explicit
+                  // locked-off directive).
+                  updateShot(shot.id, { cameraMove: null, cameraStrength: null });
+                  return;
+                }
+                updateShot(shot.id, {
+                  cameraMove: move,
+                  // Static has no strength — drop any leftover choice so it
+                  // doesn't silently reappear when a move is picked again.
+                  ...(move === "static" ? { cameraStrength: null } : {}),
+                });
+              }}
+              className="rounded border bg-background p-1 text-xs"
+            >
+              <option value="">— (from prompt)</option>
+              {CAMERA_MOVES.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            {shot.cameraMove && shot.cameraMove !== "static" && (
+              <select
+                value={shot.cameraStrength ?? "medium"}
+                onChange={(e) => updateShot(shot.id, { cameraStrength: e.target.value })}
+                className="rounded border bg-background p-1 text-xs"
+              >
+                <option value="subtle">Subtle</option>
+                <option value="medium">Medium</option>
+                <option value="strong">Strong</option>
+              </select>
+            )}
+          </div>
+          {shot.cameraMove && (
+            <p className="text-[10px] text-muted-foreground">
+              {selectedModel.supportsCameraControl
+                ? "guaranteed ✓"
+                : "best-effort — written into the prompt"}
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-[10px] text-muted-foreground">Ends on</label>
+            <div className="flex gap-1 text-[10px]">
+              <button
+                type="button"
+                onClick={() => updateShot(shot.id, { endsOn: "free" })}
+                className={`rounded px-2 py-1 transition ${
+                  shot.endsOn === "free"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted hover:bg-muted/80"
+                }`}
+              >
+                Free
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!chainDisabledReason) updateShot(shot.id, { endsOn: "next" });
+                }}
+                disabled={!!chainDisabledReason}
+                title={chainDisabledReason ?? "End this clip on the next shot's image"}
+                className={`rounded px-2 py-1 transition disabled:opacity-40 ${
+                  shot.endsOn === "next"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted hover:bg-muted/80"
+                }`}
+              >
+                Next shot
+              </button>
+              <button
+                type="button"
+                onClick={() => updateShot(shot.id, { endsOn: "custom" })}
+                title="Author a custom end frame for this clip"
+                className={`rounded px-2 py-1 transition ${
+                  shot.endsOn === "custom"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted hover:bg-muted/80"
+                }`}
+              >
+                Custom…
+              </button>
+            </div>
+            {shot.endsOn === "next" && nextShot?.imageUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={nextShot.imageUrl}
+                alt="Next shot's image (this clip's end frame)"
+                className="ml-auto h-8 w-14 rounded object-cover"
+              />
+            )}
+            {shot.endsOn === "custom" && shot.endFrameStatus === "done" && shot.endFrameUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={shot.endFrameUrl}
+                alt="Custom end frame (this clip's end frame)"
+                className="ml-auto h-8 w-14 rounded object-cover"
+              />
+            )}
+          </div>
+          {chainDisabledReason && shot.endsOn !== "next" && (
+            <p className="text-[10px] text-muted-foreground">{chainDisabledReason}</p>
+          )}
+          {(shot.endsOn === "next" || shot.endsOn === "custom") && shot.endFrameSkippedReason && (
+            <p className="text-[10px] text-amber-600">
+              {END_SKIPPED_COPY[shot.endFrameSkippedReason] ??
+                `Skipped — ${shot.endFrameSkippedReason}`}
+            </p>
+          )}
+          {shot.endsOn === "custom" && (
+            <div className="space-y-1.5 rounded border border-dashed p-2">
+              <div className="flex gap-2">
+                <input
+                  value={endFrameInstructionDraft}
+                  onChange={(e) => setEndFrameInstructionDraft(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe the end frame, e.g. 'camera pulls back to reveal the city'"
+                  className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => createEndFrame(shot.id, endFrameInstructionDraft.trim())}
+                  disabled={
+                    !endFrameInstructionDraft.trim() ||
+                    !shot.imagePath ||
+                    shot.imageStatus !== "done" ||
+                    shot.endFrameStatus === "generating"
+                  }
+                  title={
+                    !shot.imagePath
+                      ? "Generate the shot's image first"
+                      : "Author the end frame via FLUX Kontext, sourced from the current image"
+                  }
+                >
+                  {shot.endFrameStatus === "generating" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <ImageIcon className="mr-1 h-3 w-3" />
+                  )}
+                  {shot.endFramePath ? "Re-create" : "Create end frame"}
+                </Button>
+                {shot.endFramePath && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => removeEndFrame(shot.id)}
+                    title="Remove the custom end frame (reverts Ends on to Free)"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+              {shot.endFrameStatus === "failed" && (
+                <p className="text-[10px] text-destructive">
+                  End frame generation failed. Retry above.
+                </p>
+              )}
+              {shot.endFrameStatus === "pending" && shot.endFrameInstruction && (
+                <p className="text-[10px] text-muted-foreground">
+                  End frame out of date — re-create it
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </InspectorGroup>
+
+      <InspectorGroup label="Clip — engine settings">
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Clip model
+          </p>
+          <select
+            value={clipModelId}
+            onChange={(e) => {
+              setClipModelId(e.target.value);
+              updateShot(shot.id, { clipModel: e.target.value });
+            }}
+            className="w-full rounded border bg-background p-1.5 text-xs"
+            title={selectedModel.whenToUse}
+          >
+            {CLIP_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label} — ~${estClipUsd(m).toFixed(2)}
+                {m.supportsEndFrame ? " · chains" : ""}
+                {m.nativeAudio ? " · audio" : ""}
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-muted-foreground">{selectedModel.whenToUse}</p>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-[10px] text-muted-foreground">Length</span>
+          <button
+            type="button"
+            onClick={() => stepDuration(-1)}
+            disabled={durationIndex <= 0}
+            title="Shorter"
+            className="rounded border px-1.5 py-0.5 text-xs disabled:opacity-40"
+          >
+            −
+          </button>
+          <span className="font-mono text-xs">
+            {resolvedDuration}s{shot.clipDurationChoice == null ? " (auto)" : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => stepDuration(1)}
+            disabled={durationIndex < 0 || durationIndex >= selectedModel.durations.length - 1}
+            title="Longer"
+            className="rounded border px-1.5 py-0.5 text-xs disabled:opacity-40"
+          >
+            +
+          </button>
+          {shot.clipDurationChoice != null && (
+            <button
+              type="button"
+              onClick={() => updateShot(shot.id, { clipDurationChoice: null })}
+              className="text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              auto
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-1">
+          <label
+            className="flex items-center gap-2 text-xs"
+            title={
+              !selectedModel.supportsReferences
+                ? `${selectedModel.label} can't take reference images`
+                : undefined
+            }
+          >
+            <input
+              type="checkbox"
+              checked={shot.useEntityRefs}
+              disabled={!selectedModel.supportsReferences}
+              onChange={(e) => updateShot(shot.id, { useEntityRefs: e.target.checked })}
+            />
+            <span className="text-[10px] text-muted-foreground">Cast &amp; locations featured</span>
+          </label>
+          <p className="text-[10px] text-muted-foreground">
+            {!selectedModel.supportsReferences
+              ? "not supported by this model"
+              : taggedEntities.length === 0
+                ? "(none tagged)"
+                : `${taggedEntities.map((e) => e.name).join(", ")} — from your tags`}
+          </p>
+        </div>
+
+        <details className="text-xs">
+          <summary className="cursor-pointer select-none text-[10px] font-medium text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
+            Advanced ▸
+          </summary>
+          <div className="mt-1.5 space-y-1">
+            <p className="text-[10px] text-muted-foreground">Negative prompt (this shot)</p>
+            <textarea
+              value={negativePromptDraft}
+              onChange={(e) => setNegativePromptDraft(e.target.value)}
+              onBlur={() => {
+                const trimmed = negativePromptDraft.trim();
+                if (trimmed !== (shot.negativePrompt ?? "")) {
+                  updateShot(shot.id, { negativePrompt: trimmed || null });
+                }
+              }}
+              rows={2}
+              maxLength={500}
+              placeholder={projectNegativePrompt ?? ""}
+              className="w-full rounded border bg-background p-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+        </details>
+
         <Button
           size="sm"
           variant="default"
-          className="flex-1"
+          className="w-full"
           onClick={() => generateClip(shot.id, clipModelId)}
           disabled={!shot.imagePath || shot.clipStatus === "generating"}
           title={
             !shot.imagePath
               ? "Generate image first"
-              : `${shot.clipPath ? "Regenerate" : "Generate"} clip with ${selectedModel.label} (~$${selectedModel.estUsdPerClip.toFixed(2)})`
+              : `${shot.clipPath ? "Regenerate" : "Generate"} clip with ${selectedModel.label} (~$${estClipUsd(selectedModel, resolvedDuration).toFixed(2)})`
           }
         >
           {shot.clipStatus === "generating" ? (
@@ -746,113 +1167,71 @@ function ShotEditPanel({
           ) : (
             <Film className="mr-1 h-3 w-3" />
           )}
-          {shot.clipPath ? "Re-clip" : "Clip"}
+          {shot.clipPath ? "Re-generate clip" : "Generate clip"} — ~$
+          {estClipUsd(selectedModel, resolvedDuration).toFixed(2)}
         </Button>
-      </div>
-
-      {/* Clip model + chaining */}
-      <div className="space-y-1.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Clip model — used by the Clip button above
-        </p>
-        <select
-          value={clipModelId}
-          onChange={(e) => {
-            setClipModelId(e.target.value);
-            updateShot(shot.id, { clipModel: e.target.value });
-          }}
-          className="w-full rounded border bg-background p-1.5 text-xs"
-          title={selectedModel.whenToUse}
-        >
-          {CLIP_MODELS.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label} — ~${m.estUsdPerClip.toFixed(2)}
-              {m.supportsEndFrame ? " · chains" : ""}
-              {m.nativeAudio ? " · audio" : ""}
-            </option>
-          ))}
-        </select>
-        <p className="text-[10px] text-muted-foreground">{selectedModel.whenToUse}</p>
-
-        <label
-          className="flex items-center gap-2 text-xs"
-          title={chainDisabledReason ?? "End this clip on the next shot's image for a seamless cut"}
-        >
-          <input
-            type="checkbox"
-            checked={shot.chainToNext && !chainDisabledReason}
-            disabled={!!chainDisabledReason}
-            onChange={(e) => updateShot(shot.id, { chainToNext: e.target.checked })}
-          />
-          Chain to next shot
-          {shot.chainToNext && !chainDisabledReason && nextShot?.imageUrl && (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={nextShot.imageUrl}
-              alt="Next shot's image (this clip's end frame)"
-              className="ml-auto h-8 w-14 rounded object-cover"
-            />
-          )}
-        </label>
-        {chainDisabledReason && (
-          <p className="text-[10px] text-muted-foreground">{chainDisabledReason}</p>
-        )}
-        {shot.chainToNext && shot.chainSkippedReason && (
-          <p className="text-[10px] text-amber-600">
-            {CHAIN_SKIPPED_COPY[shot.chainSkippedReason] ??
-              `Chain skipped — ${shot.chainSkippedReason}`}
+        {shot.cameraBestEffort && (
+          <p className="text-[10px] text-muted-foreground">
+            Camera move applied as prompt text (best-effort) on the last generation — this model
+            has no hard camera control.
           </p>
         )}
-      </div>
+        {shot.refsSkippedReason && (
+          <p className="text-[10px] text-muted-foreground">
+            Cast refs skipped — {REFS_SKIPPED_COPY[shot.refsSkippedReason] ?? shot.refsSkippedReason}.
+          </p>
+        )}
+        {shot.clipStatus === "failed" && (
+          <p className="text-[10px] text-destructive">Clip generation failed. Retry above.</p>
+        )}
+      </InspectorGroup>
 
-      {/* SFX */}
-      {shot.clipPath && shot.clipStatus === "done" && (
-        <div className="space-y-1.5">
-          <div className="flex gap-2">
-            <input
-              value={sfxPrompt}
-              onChange={(e) => setSfxPrompt(e.target.value)}
-              maxLength={500}
-              placeholder="Optional: steer the SFX (e.g. ticking clock, bell chime)"
-              className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
-            />
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => generateSfx(shot.id, sfxPrompt)}
-              disabled={shot.sfxStatus === "generating"}
-              title="Generate synced sound effects with MMAudio (~$0.01) — the clip itself is untouched"
-            >
-              {shot.sfxStatus === "generating" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <Music className="mr-1 h-3 w-3" />
-              )}
-              {shot.sfxPath ? "Re-roll SFX" : "Add SFX"}
-            </Button>
-            {shot.sfxPath && (
+      <InspectorGroup label="Sound">
+        {shot.clipPath && shot.clipStatus === "done" ? (
+          <div className="space-y-1.5">
+            <div className="flex gap-2">
+              <input
+                value={sfxPrompt}
+                onChange={(e) => setSfxPrompt(e.target.value)}
+                maxLength={500}
+                placeholder="Optional: steer the SFX (e.g. ticking clock, bell chime)"
+                className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
+              />
               <Button
                 size="sm"
-                variant="outline"
-                onClick={() => removeSfx(shot.id)}
-                title="Remove SFX (keeps the clip)"
+                variant="secondary"
+                onClick={() => generateSfx(shot.id, sfxPrompt)}
+                disabled={shot.sfxStatus === "generating"}
+                title="Generate synced sound effects with MMAudio (~$0.01) — the clip itself is untouched"
               >
-                <X className="h-3 w-3" />
+                {shot.sfxStatus === "generating" ? (
+                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                ) : (
+                  <Music className="mr-1 h-3 w-3" />
+                )}
+                {shot.sfxPath ? "Re-roll SFX" : "Add SFX"}
               </Button>
+              {shot.sfxPath && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => removeSfx(shot.id)}
+                  title="Remove SFX (keeps the clip)"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+            {shot.sfxStatus === "failed" && (
+              <p className="text-[10px] text-destructive">SFX generation failed. Retry above.</p>
             )}
           </div>
-          {shot.sfxStatus === "failed" && (
-            <p className="text-[10px] text-destructive">SFX generation failed. Retry above.</p>
-          )}
-        </div>
-      )}
-
-      {shot.imageStatus === "failed" && (
-        <p className="text-[10px] text-destructive">Image generation failed. Retry above.</p>
-      )}
-      {shot.clipStatus === "failed" && (
-        <p className="text-[10px] text-destructive">Clip generation failed. Retry above.</p>
-      )}
+        ) : (
+          <p className="text-[10px] text-muted-foreground">
+            Generate a clip first — SFX layers onto the finished clip.
+          </p>
+        )}
+      </InspectorGroup>
 
       {/* Timeline ops */}
       <div className="flex gap-2">

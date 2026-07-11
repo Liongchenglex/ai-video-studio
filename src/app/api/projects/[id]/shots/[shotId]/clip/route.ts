@@ -6,7 +6,9 @@
  * Delegates to generateShotClip service which handles the upload, API call, and R2 storage.
  *
  * Synchronous: awaits API. Typical latency 60-120s per clip.
- * Response: includes clipModel and optional chainSkippedReason.
+ * Response: includes clipModel and, when relevant, endFrameSkippedReason /
+ * cameraBestEffort (why a requested end frame was skipped; whether the
+ * camera move was written into the prompt rather than sent as params).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";

@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useEditor, type GenerateAllPreview } from "@/components/editor/editor-store";
-import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, getClipModel } from "@/lib/clip-models";
+import { CLIP_MODELS, DEFAULT_CLIP_MODEL_ID, estClipUsd, getClipModel } from "@/lib/clip-models";
 
 export function GenerateAllDialog({
   open,
@@ -144,7 +144,7 @@ export function GenerateAllDialog({
                 >
                   {CLIP_MODELS.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.label} — ~${m.estUsdPerClip.toFixed(2)}/clip
+                      {m.label} — ~${estClipUsd(m).toFixed(2)}/clip
                     </option>
                   ))}
                 </select>

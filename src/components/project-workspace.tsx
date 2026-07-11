@@ -34,6 +34,7 @@ interface ProjectWorkspaceProps {
     tone: string;
     script: string | null;
     voiceId: string;
+    negativePrompt: string | null;
   };
   initialBeats: EditorBeat[];
   initialShots: EditorShot[];
@@ -272,6 +273,7 @@ export function ProjectWorkspace({
           initialBeats={initialBeats}
           initialShots={initialShots}
           initialEntities={initialEntities}
+          negativePrompt={project.negativePrompt}
           onVoiceChange={handleVoiceChange}
         />
       )}
