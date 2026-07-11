@@ -106,7 +106,13 @@ export async function editShotImage(
     console.log(`[shot-frame-edit] image edit done: ${r2Key}`);
     return { imagePath: r2Key, imageUrl: await getDownloadUrl(r2Key) };
   } catch (error) {
-    await db.update(shots).set({ imageStatus: "failed" }).where(eq(shots.id, shot.id)).catch(() => {});
+    // The route's precondition guarantees imageStatus was "done" with an
+    // intact image.png before this edit started, and this function never
+    // touches/overwrites image.png until the new one is fully downloaded
+    // and stored — so a Kontext failure leaves the prior image untouched.
+    // Restore "done" (not "failed") so the UI doesn't show a false failure
+    // over a still-good image (final-review finding #2).
+    await db.update(shots).set({ imageStatus: "done" }).where(eq(shots.id, shot.id)).catch(() => {});
     throw error;
   }
 }

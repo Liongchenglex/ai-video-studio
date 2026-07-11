@@ -580,7 +580,12 @@ export function EditorProvider(props: {
         });
         if (!res.ok) {
           console.warn("[editor-store] image edit failed:", await res.text());
-          dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
+          // The route only allows editing when imageStatus was already
+          // "done" with an intact image, and a failed edit never touches
+          // that image — restore "done" (not "failed") so the UI doesn't
+          // show a false failure over a still-good image (mirrors
+          // shot-frame-edit.ts's editShotImage; final-review finding #2).
+          dispatch({ type: "patchShot", shotId, patch: { imageStatus: "done" } });
           return false;
         }
         const data = (await res.json()) as {
@@ -606,7 +611,9 @@ export function EditorProvider(props: {
         return true;
       } catch (err) {
         console.error("[editor-store] image edit error:", err);
-        dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
+        // Same precondition as the non-ok branch above: restore "done", not
+        // "failed" (final-review finding #2).
+        dispatch({ type: "patchShot", shotId, patch: { imageStatus: "done" } });
         return false;
       }
     },

@@ -867,9 +867,16 @@ function ShotEditPanel({
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-[10px] text-muted-foreground">Camera move</label>
             <select
-              value={shot.cameraMove ?? "static"}
+              value={shot.cameraMove ?? ""}
               onChange={(e) => {
                 const move = e.target.value;
+                if (move === "") {
+                  // No override — leave camera direction to the prompt as
+                  // written, distinct from "static" (an explicit
+                  // locked-off directive).
+                  updateShot(shot.id, { cameraMove: null, cameraStrength: null });
+                  return;
+                }
                 updateShot(shot.id, {
                   cameraMove: move,
                   // Static has no strength — drop any leftover choice so it
@@ -879,6 +886,7 @@ function ShotEditPanel({
               }}
               className="rounded border bg-background p-1 text-xs"
             >
+              <option value="">— (from prompt)</option>
               {CAMERA_MOVES.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
@@ -897,11 +905,13 @@ function ShotEditPanel({
               </select>
             )}
           </div>
-          <p className="text-[10px] text-muted-foreground">
-            {selectedModel.supportsCameraControl
-              ? "guaranteed ✓"
-              : "best-effort — written into the prompt"}
-          </p>
+          {shot.cameraMove && (
+            <p className="text-[10px] text-muted-foreground">
+              {selectedModel.supportsCameraControl
+                ? "guaranteed ✓"
+                : "best-effort — written into the prompt"}
+            </p>
+          )}
         </div>
 
         <div className="space-y-1">

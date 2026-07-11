@@ -111,7 +111,7 @@ export const CLIP_MODELS: ClipModelSpec[] = [
     supportsReferences: false,
     supportsNegativePrompt: true,
     whenToUse:
-      "Cheaper alternative to the default: strong, stable motion and the best chaining. Tradeoff: 5s max per clip (10s optional), no sound of its own (use Add SFX).",
+      "Cheaper alternative to the default: strong, stable motion and the best chaining. Tradeoff: 5s default, 10s optional, no sound of its own (use Add SFX).",
     buildInput: ({ imageUrl, prompt, tailImageUrl, negativePrompt, durationSeconds }) => ({
       image_url: imageUrl,
       prompt,

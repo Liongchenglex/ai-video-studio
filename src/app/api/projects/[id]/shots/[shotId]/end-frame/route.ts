@@ -106,6 +106,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   if (!row) return notFoundResponse();
   const { shot } = row;
 
+  // In-flight guard (mirrors the POST guard above): deleting out from under
+  // a generating end frame would race the write that lands when it finishes.
+  if (shot.endFrameStatus === "generating") {
+    return badRequestResponse("End frame is generating — wait for it to finish before deleting");
+  }
+
   if (shot.endFramePath) {
     try {
       await deleteObject(shot.endFramePath);

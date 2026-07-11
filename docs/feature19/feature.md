@@ -203,6 +203,20 @@ No project-level default clip model column (unchanged from Clip Engine
 v2) — the model choice stays per-shot/per-batch-run, stateless at the
 project level.
 
+### Deploy sequence
+
+The `chain_to_next → ends_on` migration above is this release's only
+destructive schema change, so it must run in order:
+1. **Backfill** — run the `UPDATE` in
+   [`docs/feature19/migration-backfill.sql`](./migration-backfill.sql)
+   against production to fold `chain_to_next = true` rows into
+   `ends_on = 'next'`. Idempotent — safe to re-run.
+2. **Verify** — run the `SELECT count(*)` in the same file; it must return
+   `0` before proceeding. A non-zero count means the backfill didn't
+   converge and the drop must NOT proceed.
+3. **Push** — only then run `drizzle-kit push` to apply the schema
+   migration that drops `chain_to_next`.
+
 ## APIs
 | Method | Endpoint | Notes |
 |---|---|---|
