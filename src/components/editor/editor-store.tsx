@@ -276,9 +276,12 @@ interface EditorContextValue {
   deleteShot(shotId: string): Promise<void>;
   splitShot(shotId: string, atInBeat: number): Promise<void>;
   generateImage(shotId: string): Promise<void>;
+  editShotImage(shotId: string, instruction: string): Promise<void>;
   generateClip(shotId: string, model?: string): Promise<void>;
   generateSfx(shotId: string, prompt?: string): Promise<void>;
   removeSfx(shotId: string): Promise<void>;
+  createEndFrame(shotId: string, instruction: string): Promise<void>;
+  removeEndFrame(shotId: string): Promise<void>;
   recommendShots(): Promise<void>;
   recommending: boolean;
   createEntity(
@@ -563,6 +566,48 @@ export function EditorProvider(props: {
     [projectId],
   );
 
+  const editShotImage = useCallback(
+    async (shotId: string, instruction: string) => {
+      dispatch({ type: "patchShot", shotId, patch: { imageStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/image/edit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instruction }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] image edit failed:", await res.text());
+          dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
+          return;
+        }
+        const data = (await res.json()) as {
+          imagePath: string;
+          imageUrl: string;
+          imageStatus: string;
+        };
+        // Mirror the server (shot-frame-edit.ts's editShotImage): the edit
+        // just changed the image underneath any previously authored end
+        // frame, so flag it stale for re-roll — the route doesn't echo this
+        // decision back, so it's derived here from the current shot state.
+        const hasEndFrame = !!state.shots.find((s) => s.id === shotId)?.endFramePath;
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: {
+            imagePath: data.imagePath,
+            imageUrl: data.imageUrl,
+            imageStatus: "done",
+            ...(hasEndFrame ? { endFrameStatus: "pending" as const } : {}),
+          },
+        });
+      } catch (err) {
+        console.error("[editor-store] image edit error:", err);
+        dispatch({ type: "patchShot", shotId, patch: { imageStatus: "failed" } });
+      }
+    },
+    [projectId, state.shots],
+  );
+
   const generateClip = useCallback(
     async (shotId: string, model?: string) => {
       // Clear any stale transients from a previous generation — a fresh run
@@ -675,6 +720,78 @@ export function EditorProvider(props: {
         });
       } catch (err) {
         console.error("[editor-store] sfx removal error:", err);
+      }
+    },
+    [projectId],
+  );
+
+  const createEndFrame = useCallback(
+    async (shotId: string, instruction: string) => {
+      dispatch({ type: "patchShot", shotId, patch: { endFrameStatus: "generating" } });
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/end-frame`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instruction }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] end frame creation failed:", await res.text());
+          dispatch({ type: "patchShot", shotId, patch: { endFrameStatus: "failed" } });
+          return;
+        }
+        const data = (await res.json()) as { endFramePath: string; endFrameUrl: string };
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: {
+            endFramePath: data.endFramePath,
+            endFrameUrl: data.endFrameUrl,
+            endFrameStatus: "done",
+            // The route doesn't echo the instruction back in its response —
+            // persist what was sent, matching what createShotEndFrame wrote
+            // to the DB (shot-frame-edit.ts).
+            endFrameInstruction: instruction,
+          },
+        });
+      } catch (err) {
+        console.error("[editor-store] end frame creation error:", err);
+        dispatch({ type: "patchShot", shotId, patch: { endFrameStatus: "failed" } });
+      }
+    },
+    [projectId],
+  );
+
+  const removeEndFrame = useCallback(
+    async (shotId: string) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/end-frame`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] end frame removal failed:", await res.text());
+          return;
+        }
+        const data = (await res.json()) as {
+          endFramePath: null;
+          endFrameInstruction: null;
+          endFrameStatus: string;
+          endsOn: "free" | "next" | "custom";
+        };
+        // Response is authoritative for endsOn too — the route flips it back
+        // to "free" when it was "custom" (DELETE semantics, end-frame route).
+        dispatch({
+          type: "patchShot",
+          shotId,
+          patch: {
+            endFramePath: data.endFramePath,
+            endFrameUrl: null,
+            endFrameInstruction: data.endFrameInstruction,
+            endFrameStatus: data.endFrameStatus,
+            endsOn: data.endsOn,
+          },
+        });
+      } catch (err) {
+        console.error("[editor-store] end frame removal error:", err);
       }
     },
     [projectId],
@@ -1073,9 +1190,12 @@ export function EditorProvider(props: {
     deleteShot,
     splitShot,
     generateImage,
+    editShotImage,
     generateClip,
     generateSfx,
     removeSfx,
+    createEndFrame,
+    removeEndFrame,
     recommendShots,
     recommending,
     createEntity,

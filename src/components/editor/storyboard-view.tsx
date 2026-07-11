@@ -115,6 +115,14 @@ function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; i
           </div>
         )}
         <StatusBadge status={status} />
+        {shot.endsOn === "custom" && shot.endFramePath && (
+          <span
+            title="Directed ending"
+            className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] leading-tight text-white"
+          >
+            ▸▮
+          </span>
+        )}
       </div>
 
       <div className="flex flex-col gap-2 p-3">

@@ -34,6 +34,7 @@ import {
   TextCursorInput,
   Music,
   X,
+  Wand2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -361,9 +362,12 @@ function ShotEditPanel({
     deleteShot,
     splitShot,
     generateImage,
+    editShotImage,
     generateClip,
     generateSfx,
     removeSfx,
+    createEndFrame,
+    removeEndFrame,
     tagShot,
   } = useEditor();
   // Narration under the shot's time range — the concatenated text of every
@@ -388,6 +392,18 @@ function ShotEditPanel({
   // the shot's saved model on mount / when the selection moves to another shot.
   const [clipModelId, setClipModelId] = useState(shot.clipModel ?? DEFAULT_CLIP_MODEL_ID);
   const [sfxPrompt, setSfxPrompt] = useState("");
+  // Edit-image inline form (Directing Controls task 15) — a toggled
+  // instruction input under the Image group, separate from the image
+  // prompt textarea: this edits the EXISTING image in place via Kontext
+  // rather than regenerating from the prompt.
+  const [showEditImage, setShowEditImage] = useState(false);
+  const [editImageInstruction, setEditImageInstruction] = useState("");
+  // Custom end frame instruction draft — prefilled from the shot's
+  // persisted endFrameInstruction so re-opening the panel shows the last
+  // instruction used, editable before a re-create.
+  const [endFrameInstructionDraft, setEndFrameInstructionDraft] = useState(
+    shot.endFrameInstruction ?? "",
+  );
   const selectedModel = getClipModel(clipModelId) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
   // Timeline order, not sortOrder (final-review finding #1) — EditorBeat
   // already carries `sortOrder` (its position on the timeline; the reducer
@@ -435,6 +451,20 @@ function ShotEditPanel({
   useEffect(() => {
     setSfxPrompt("");
   }, [shot.id]);
+
+  // Selection moved to another shot — collapse the edit-image form and drop
+  // any unsent draft instead of leaking it onto the newly selected shot.
+  useEffect(() => {
+    setShowEditImage(false);
+    setEditImageInstruction("");
+  }, [shot.id]);
+
+  // Keep the end-frame instruction draft in sync with what's actually
+  // persisted (selection change, or a create/re-create/remove landing) —
+  // NOT on every render, so mid-typing edits before a re-create survive.
+  useEffect(() => {
+    setEndFrameInstructionDraft(shot.endFrameInstruction ?? "");
+  }, [shot.id, shot.endFrameInstruction]);
 
   const prevImageUrl = useRef(shot.imageUrl);
   const prevClipUrl = useRef(shot.clipUrl);
@@ -521,6 +551,13 @@ function ShotEditPanel({
     } finally {
       setSuggestingMotion(false);
     }
+  };
+
+  const handleEditImage = async () => {
+    const trimmed = editImageInstruction.trim();
+    if (!trimmed) return;
+    await editShotImage(shot.id, trimmed);
+    setEditImageInstruction("");
   };
 
   const hasImage = !!shot.imageUrl;
@@ -750,6 +787,42 @@ function ShotEditPanel({
         {shot.imageStatus === "failed" && (
           <p className="text-[10px] text-destructive">Image generation failed. Retry above.</p>
         )}
+        {shot.imagePath && (
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => setShowEditImage((v) => !v)}
+              className="text-[10px] text-muted-foreground underline underline-offset-2 transition hover:text-foreground"
+            >
+              {showEditImage ? "Hide edit image" : "Edit image…"}
+            </button>
+            {showEditImage && (
+              <div className="flex gap-2">
+                <input
+                  value={editImageInstruction}
+                  onChange={(e) => setEditImageInstruction(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe the edit, e.g. 'make the sky sunset orange'"
+                  className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleEditImage}
+                  disabled={!editImageInstruction.trim() || shot.imageStatus === "generating"}
+                  title="Edit the current image in place via FLUX Kontext — overwrites it"
+                >
+                  {shot.imageStatus === "generating" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="mr-1 h-3 w-3" />
+                  )}
+                  Apply
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </InspectorGroup>
 
       <InspectorGroup label="Action — what happens in the shot">
@@ -859,6 +932,18 @@ function ShotEditPanel({
               >
                 Next shot
               </button>
+              <button
+                type="button"
+                onClick={() => updateShot(shot.id, { endsOn: "custom" })}
+                title="Author a custom end frame for this clip"
+                className={`rounded px-2 py-1 transition ${
+                  shot.endsOn === "custom"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted hover:bg-muted/80"
+                }`}
+              >
+                Custom…
+              </button>
             </div>
             {shot.endsOn === "next" && nextShot?.imageUrl && (
               /* eslint-disable-next-line @next/next/no-img-element */
@@ -868,15 +953,78 @@ function ShotEditPanel({
                 className="ml-auto h-8 w-14 rounded object-cover"
               />
             )}
+            {shot.endsOn === "custom" && shot.endFrameStatus === "done" && shot.endFrameUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={shot.endFrameUrl}
+                alt="Custom end frame (this clip's end frame)"
+                className="ml-auto h-8 w-14 rounded object-cover"
+              />
+            )}
           </div>
           {chainDisabledReason && shot.endsOn !== "next" && (
             <p className="text-[10px] text-muted-foreground">{chainDisabledReason}</p>
           )}
-          {shot.endsOn === "next" && shot.endFrameSkippedReason && (
+          {(shot.endsOn === "next" || shot.endsOn === "custom") && shot.endFrameSkippedReason && (
             <p className="text-[10px] text-amber-600">
               {END_SKIPPED_COPY[shot.endFrameSkippedReason] ??
                 `Skipped — ${shot.endFrameSkippedReason}`}
             </p>
+          )}
+          {shot.endsOn === "custom" && (
+            <div className="space-y-1.5 rounded border border-dashed p-2">
+              <div className="flex gap-2">
+                <input
+                  value={endFrameInstructionDraft}
+                  onChange={(e) => setEndFrameInstructionDraft(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe the end frame, e.g. 'camera pulls back to reveal the city'"
+                  className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => createEndFrame(shot.id, endFrameInstructionDraft.trim())}
+                  disabled={
+                    !endFrameInstructionDraft.trim() ||
+                    !shot.imagePath ||
+                    shot.endFrameStatus === "generating"
+                  }
+                  title={
+                    !shot.imagePath
+                      ? "Generate the shot's image first"
+                      : "Author the end frame via FLUX Kontext, sourced from the current image"
+                  }
+                >
+                  {shot.endFrameStatus === "generating" ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <ImageIcon className="mr-1 h-3 w-3" />
+                  )}
+                  {shot.endFramePath ? "Re-create" : "Create end frame"}
+                </Button>
+                {shot.endFramePath && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => removeEndFrame(shot.id)}
+                    title="Remove the custom end frame (reverts Ends on to Free)"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+              {shot.endFrameStatus === "failed" && (
+                <p className="text-[10px] text-destructive">
+                  End frame generation failed. Retry above.
+                </p>
+              )}
+              {shot.endFrameStatus === "pending" && shot.endFrameInstruction && (
+                <p className="text-[10px] text-muted-foreground">
+                  End frame out of date — re-create it
+                </p>
+              )}
+            </div>
           )}
         </div>
       </InspectorGroup>
