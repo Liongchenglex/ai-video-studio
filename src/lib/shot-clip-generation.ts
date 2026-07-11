@@ -222,7 +222,10 @@ export async function generateShotClip(
 
     const output = result.data as { video?: { url: string; duration?: number } };
     if (!output.video?.url) throw new Error(`${spec.label} returned no video`);
-    const clipDuration = output.video.duration ?? spec.durationSeconds;
+    // Fall back to the duration we REQUESTED, not the model default —
+    // Kling v3 honors the request but omits duration in its response
+    // (observed live: requested 4s, real file 4.04s, response had none).
+    const clipDuration = output.video.duration ?? durationSeconds;
 
     const videoRes = await fetch(output.video.url);
     if (!videoRes.ok) throw new Error("Failed to download generated clip");
