@@ -88,6 +88,14 @@ export interface EditorShot {
   // selected camera move as a best-effort prompt suffix (the model has no
   // hard camera-control param). Same lifecycle as endFrameSkippedReason.
   cameraBestEffort?: boolean;
+  // Client-only — how many tagged-entity reference sheets rode into the most
+  // recent clip generation as cast/location refs. Same lifecycle as
+  // cameraBestEffort: cleared at generateClip start, patched from response.
+  refsApplied?: number;
+  // Client-only — why entity references were skipped on the most recent clip
+  // generation ("disabled" | "model-no-references" | "no-ready-sheets").
+  // Same lifecycle as cameraBestEffort.
+  refsSkippedReason?: string | null;
 }
 
 export interface EditorEntity {
@@ -562,7 +570,13 @@ export function EditorProvider(props: {
       dispatch({
         type: "patchShot",
         shotId,
-        patch: { clipStatus: "generating", endFrameSkippedReason: null, cameraBestEffort: false },
+        patch: {
+          clipStatus: "generating",
+          endFrameSkippedReason: null,
+          cameraBestEffort: false,
+          refsApplied: 0,
+          refsSkippedReason: null,
+        },
       });
       try {
         const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/clip`, {
@@ -583,6 +597,8 @@ export function EditorProvider(props: {
           clipModel: string;
           endFrameSkippedReason?: string;
           cameraBestEffort?: boolean;
+          refsApplied?: number;
+          refsSkippedReason?: string;
         };
         if (data.endFrameSkippedReason) {
           console.warn(`[editor-store] end frame skipped: ${data.endFrameSkippedReason}`);
@@ -602,6 +618,8 @@ export function EditorProvider(props: {
             sfxUrl: null,
             endFrameSkippedReason: data.endFrameSkippedReason ?? null,
             cameraBestEffort: data.cameraBestEffort ?? false,
+            refsApplied: data.refsApplied ?? 0,
+            refsSkippedReason: data.refsSkippedReason ?? null,
           },
         });
       } catch (err) {

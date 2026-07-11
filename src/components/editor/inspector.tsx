@@ -80,6 +80,15 @@ const END_SKIPPED_COPY: Record<string, string> = {
   "custom-frame-not-ready": "Skipped — the custom end frame wasn't ready",
 };
 
+// Copy for the post-generation "Cast refs skipped — …" note under the Clip
+// group (Directing Controls task 13). Mirrors END_SKIPPED_COPY's shape —
+// keyed by the server's RefsSkipReason (src/lib/clip-references.ts).
+const REFS_SKIPPED_COPY: Record<string, string> = {
+  disabled: "featured toggle is off",
+  "model-no-references": "this model can't take references",
+  "no-ready-sheets": "no tagged entity has a finished sheet",
+};
+
 const MIN_HALF = 0.25; // seconds — mirror the server split guard
 
 interface InspectorProps {
@@ -689,7 +698,7 @@ function ShotEditPanel({
           <p className="text-[10px] leading-4 text-muted-foreground">
             {taggedEntities.length > 0 && !hasReadyReference
               ? "no reference sheet yet — Generate one in the rail to condition this shot"
-              : "★ primary (its sheet conditions the image) · click a chip to tag/untag · the small icon inserts the name into the prompt"}
+              : "★ primary · sheets condition the image and the clip · click a chip to tag/untag · the small icon inserts the name into the prompt"}
           </p>
         </div>
       )}
@@ -931,6 +940,32 @@ function ShotEditPanel({
           )}
         </div>
 
+        <div className="space-y-1">
+          <label
+            className="flex items-center gap-2 text-xs"
+            title={
+              !selectedModel.supportsReferences
+                ? `${selectedModel.label} can't take reference images`
+                : undefined
+            }
+          >
+            <input
+              type="checkbox"
+              checked={shot.useEntityRefs}
+              disabled={!selectedModel.supportsReferences}
+              onChange={(e) => updateShot(shot.id, { useEntityRefs: e.target.checked })}
+            />
+            <span className="text-[10px] text-muted-foreground">Cast &amp; locations featured</span>
+          </label>
+          <p className="text-[10px] text-muted-foreground">
+            {!selectedModel.supportsReferences
+              ? "not supported by this model"
+              : taggedEntities.length === 0
+                ? "(none tagged)"
+                : `${taggedEntities.map((e) => e.name).join(", ")} — from your tags`}
+          </p>
+        </div>
+
         <details className="text-xs">
           <summary className="cursor-pointer select-none text-[10px] font-medium text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
             Advanced ▸
@@ -978,6 +1013,11 @@ function ShotEditPanel({
           <p className="text-[10px] text-muted-foreground">
             Camera move applied as prompt text (best-effort) on the last generation — this model
             has no hard camera control.
+          </p>
+        )}
+        {shot.refsSkippedReason && (
+          <p className="text-[10px] text-muted-foreground">
+            Cast refs skipped — {REFS_SKIPPED_COPY[shot.refsSkippedReason] ?? shot.refsSkippedReason}.
           </p>
         )}
         {shot.clipStatus === "failed" && (
