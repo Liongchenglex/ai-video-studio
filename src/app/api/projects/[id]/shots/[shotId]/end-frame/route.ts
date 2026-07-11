@@ -57,6 +57,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!shot.imagePath || shot.imageStatus !== "done") {
     return badRequestResponse("Generate the shot's image before authoring an end frame");
   }
+  // Paid-call double-click protection (SFX route idiom).
+  if (shot.endFrameStatus === "generating") {
+    return badRequestResponse("End frame is already generating for this shot");
+  }
 
   let instruction: string;
   const raw = await request.text();

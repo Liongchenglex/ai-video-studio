@@ -50,6 +50,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!row) return notFoundResponse();
   const { shot, project } = row;
 
+  // Paid-call double-click protection (SFX route idiom). Checked before
+  // the "done" precondition below so an in-flight edit gets the specific
+  // message instead of the generic "generate first" one (the edit shares
+  // imageStatus with generation, so it would otherwise be unreachable).
+  if (shot.imageStatus === "generating") {
+    return badRequestResponse("Image is already generating for this shot");
+  }
   if (!shot.imagePath || shot.imageStatus !== "done") {
     return badRequestResponse("Generate the shot's image before editing it");
   }
