@@ -79,9 +79,8 @@ export interface EditorShot {
   // Reference Bible tagging (F-16) — populated server-side by page.tsx from
   // the DB column (which defaults to [] there too); always an array here.
   referencedEntityIds: string[];
-  // Client-only (final-review finding #3; renamed from chainSkippedReason
-  // in Directing Controls task 7) — why a requested end frame was skipped
-  // on the most recent clip generation. Never persisted: both server
+  // Client-only — why a requested end frame was skipped on the most
+  // recent clip generation. Never persisted: both server
   // serializers (shots GET route, page.tsx) omit it, so it starts
   // undefined on load and is only ever set from a generateClip response.
   endFrameSkippedReason?: string | null;
