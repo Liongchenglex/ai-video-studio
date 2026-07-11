@@ -330,3 +330,69 @@ export const entities = pgTable(
 
 export type Entity = typeof entities.$inferSelect;
 export type NewEntity = typeof entities.$inferInsert;
+
+// ─── AI Assistant Director (director_runs / director_events) ────────
+// A director run is an autonomous agent loop that iterates on a single
+// shot's clip within a budget, producing candidate clips + proposals for
+// the user to approve/reject. Events are the run's append-only activity
+// log (notes, critiques, actions, cost updates, errors) ordered by seq.
+
+export const directorRunStatusEnum = pgEnum("director_run_status", [
+  "running",
+  "awaiting_approval",
+  "approved",
+  "rejected",
+  "stopped",
+  "failed",
+]);
+
+export const directorRuns = pgTable(
+  "director_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    shotId: uuid("shot_id")
+      .notNull()
+      .references(() => shots.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    status: directorRunStatusEnum("status").default("running").notNull(),
+    budgetUsd: doublePrecision("budget_usd").notNull(),
+    spentUsd: doublePrecision("spent_usd").default(0).notNull(),
+    guidance: text("guidance"),
+    verdict: text("verdict"),
+    stopRequested: boolean("stop_requested").default(false).notNull(),
+    clipCandidatePath: text("clip_candidate_path"),
+    candidateDurationSeconds: integer("candidate_duration_seconds"),
+    candidateModel: text("candidate_model"),
+    settingsSnapshot: jsonb("settings_snapshot").$type<Record<string, unknown>>(),
+    proposals: jsonb("proposals").$type<Array<Record<string, unknown>>>().default([]),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [index("director_runs_shot_id_idx").on(t.shotId)],
+);
+
+export type DirectorRun = typeof directorRuns.$inferSelect;
+export type NewDirectorRun = typeof directorRuns.$inferInsert;
+
+export const directorEvents = pgTable(
+  "director_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => directorRuns.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    type: text("type").notNull(), // 'note' | 'critique' | 'action' | 'cost' | 'error'
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("director_events_run_id_seq_idx").on(t.runId, t.seq)],
+);
+
+export type DirectorEvent = typeof directorEvents.$inferSelect;
+export type NewDirectorEvent = typeof directorEvents.$inferInsert;
