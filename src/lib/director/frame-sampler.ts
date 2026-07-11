@@ -52,8 +52,10 @@ async function probeDurationSeconds(binary: string, videoPath: string): Promise<
   return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
 }
 
+// Rescue window: 5 attempts x 0.3s = up to 1.2s of backward search, wide
+// enough to land on a frame even in low-fps generated clips.
 const EXTRACT_MAX_ATTEMPTS = 5;
-const EXTRACT_BACKOFF_SECONDS = 0.1;
+const EXTRACT_BACKOFF_SECONDS = 0.3;
 
 /**
  * Extracts a single JPEG frame at (or just before) the given timestamp.
@@ -63,7 +65,9 @@ const EXTRACT_BACKOFF_SECONDS = 0.1;
  * low-fps clip, seeking a few hundredths of a second past the final
  * frame) — it isn't an error exit, just an empty file. When that
  * happens, retries a few times at progressively earlier timestamps
- * before giving up.
+ * before giving up. As a result, extracted timestamps are best-effort
+ * evenly spaced: the rescue may shift a frame earlier by up to the
+ * rescue window on sparse-PTS sources.
  */
 async function extractFrame(
   binary: string,
@@ -94,7 +98,7 @@ async function extractFrame(
  *
  * Writes the buffer to a random temp file under os.tmpdir(), probes its
  * duration via ffmpeg, extracts one frame per timestamp
- * `(i / (count - 1)) * duration` (clamped inside `[0, duration - 0.05]`),
+ * `(i / (count - 1)) * duration` (clamped inside `[0, duration - 0.15]`),
  * and returns the frames as Buffers in order. All temp files (the source
  * video and every extracted frame) are removed in a `finally` block.
  *
@@ -115,7 +119,9 @@ export async function sampleVideoFrames(video: Buffer, count: number): Promise<B
     await writeFile(videoPath, video);
 
     const duration = await probeDurationSeconds(binary, videoPath);
-    const maxTimestamp = Math.max(duration - 0.05, 0);
+    // Keep the last sample comfortably before EOF so the extract's
+    // backward rescue rarely has to engage in the first place.
+    const maxTimestamp = Math.max(duration - 0.15, 0);
 
     const frames: Buffer[] = [];
     for (let i = 0; i < count; i++) {
