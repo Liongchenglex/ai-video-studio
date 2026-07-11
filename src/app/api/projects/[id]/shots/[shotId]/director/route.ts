@@ -12,7 +12,12 @@
  * GET  /api/projects/[id]/shots/[shotId]/director — polls the shot's most
  *      recent run plus any events after `?since=` (seq, default 0).
  *      Read-only: session + ownership only, no CSRF/rate-limit (mirrors the
- *      generate-all preview route's auth).
+ *      generate-all preview route's auth). Critique events carry candidate
+ *      frame R2 KEYS (`payload.frameKeys`), never presigned URLs (Task 7's
+ *      direct-shot loop writes keys because a presigned URL embedded in a
+ *      DB row would go stale) — this route presigns them into
+ *      `payload.frameUrls` on every read, on a copy of the event, so the
+ *      stored row is never mutated.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -30,8 +35,23 @@ import {
 import { getDownloadUrl } from "@/lib/r2";
 import { inngest } from "@/inngest";
 import { createRun, getRunById, getRunWithEvents, activeRunForShot } from "@/lib/director/director-run";
+import type { DirectorEvent } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
+
+/**
+ * Presigns a critique event's `frameKeys` (R2 keys) into `frameUrls`
+ * (presigned download URLs) for this one response — returns a new event
+ * object, never mutates the DB row passed in. Events of any other type, or
+ * critique events with no (or malformed) frameKeys, pass through unchanged.
+ */
+async function presignEventFrames(event: DirectorEvent): Promise<DirectorEvent> {
+  if (event.type !== "critique") return event;
+  const { frameKeys, ...rest } = event.payload;
+  if (!Array.isArray(frameKeys) || frameKeys.some((k) => typeof k !== "string")) return event;
+  const frameUrls = await Promise.all((frameKeys as string[]).map((key) => getDownloadUrl(key)));
+  return { ...event, payload: { ...rest, frameUrls } };
+}
 
 const MIN_BUDGET_USD = 0.25;
 const MAX_BUDGET_USD = 5.0;
@@ -182,6 +202,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   const { run, events } = result;
 
   const candidateUrl = run.clipCandidatePath ? await getDownloadUrl(run.clipCandidatePath) : null;
+  const presignedEvents = await Promise.all(events.map(presignEventFrames));
 
-  return NextResponse.json({ run: { ...run, candidateUrl }, events });
+  return NextResponse.json({ run: { ...run, candidateUrl }, events: presignedEvents });
 }

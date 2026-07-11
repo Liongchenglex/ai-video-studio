@@ -40,7 +40,7 @@ import { inngest } from "../client";
 import { db } from "@/lib/db";
 import { directorRuns, projects, shots, beats, entities, type Project, type Shot, type DirectorRun } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { r2Client, getDownloadUrl } from "@/lib/r2";
+import { r2Client } from "@/lib/r2";
 import {
   getDirectorTool,
   toAnthropicTools,
@@ -193,8 +193,9 @@ interface AssessResult {
 /**
  * One forced self-critique call: builds the briefing, forces
  * record_critique, meters usage, records the critique event (enriched with
- * presigned 0%/100% candidate-frame URLs when a candidate already exists),
- * and reports whether every dimension passed.
+ * the 0%/100% candidate-frame R2 KEYS — never presigned URLs, which expire —
+ * when a candidate already exists; the director GET route presigns them
+ * into frameUrls at read time), and reports whether every dimension passed.
  */
 async function runAssessStep(
   anthropic: Anthropic,
@@ -238,10 +239,10 @@ async function runAssessStep(
   const enrichedInput: Record<string, unknown> = { dimensions, summary };
   if (hasCandidate) {
     const candidateKey = (file: string) => `projects/${project.id}/shots/${shot.id}/director/${runId}/${file}`;
-    enrichedInput.candidateFrames = {
-      start: await getDownloadUrl(candidateKey("frame-0.png")),
-      end: await getDownloadUrl(candidateKey("frame-3.png")),
-    };
+    // R2 keys, not presigned URLs — presigned URLs expire long before a
+    // client polling this event days later would render them. The GET
+    // route maps these into frameUrls at read time.
+    enrichedInput.frameKeys = [candidateKey("frame-0.png"), candidateKey("frame-3.png")];
   }
   await getDirectorTool("record_critique")!.execute(
     buildDirectorCtx(project, shot, runId, scratch, false),

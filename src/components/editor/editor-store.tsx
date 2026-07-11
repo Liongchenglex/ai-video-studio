@@ -118,6 +118,43 @@ export interface GenerateAllPreview {
   batchRunning: boolean;
 }
 
+// ── AI Assistant Director (Task 6/7/8) ──
+// Deliberately hand-typed (not imported from db/schema) so this client
+// module never pulls server-only drizzle types into the browser bundle —
+// same reasoning as EditorShot/EditorEntity above.
+
+/** One director_events row as the GET route serializes it — critique events carry `frameUrls` (presigned at read time), never `frameKeys`. */
+export interface DirectorEventView {
+  id: string;
+  seq: number;
+  type: string; // 'note' | 'critique' | 'action' | 'cost' | 'error'
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** A director_runs row as the GET route serializes it, plus the presigned `candidateUrl`. */
+export interface DirectorRunView {
+  id: string;
+  shotId: string;
+  status: string; // 'running' | 'awaiting_approval' | 'approved' | 'rejected' | 'stopped' | 'failed'
+  budgetUsd: number;
+  spentUsd: number;
+  guidance: string | null;
+  verdict: string | null;
+  clipCandidatePath: string | null;
+  candidateDurationSeconds: number | null;
+  candidateModel: string | null;
+  candidateUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Per-shot director poll state — undefined until the shot's status has been checked at least once (see the "mounted shot" effect in EditorProvider). `run: null` means checked, no run ever started. */
+export interface DirectorShotState {
+  run: DirectorRunView | null;
+  events: DirectorEventView[];
+}
+
 export type EditorView = "timeline" | "storyboard";
 
 export type EditorSelection =
@@ -309,6 +346,13 @@ interface EditorContextValue {
     includeSfx?: boolean;
   }): Promise<boolean>;
   batchActive: boolean;
+  // AI Assistant Director (Task 8) — startDirector's 4th param mirrors the
+  // route's optional `guidance`. directorState is keyed by shotId; entries
+  // are populated lazily (see EditorProvider's "mounted shot" effect) and
+  // kept fresh by a 3s poll while any entry's run is `running`.
+  startDirector(shotId: string, budgetUsd: number, guidance?: string): Promise<boolean>;
+  stopDirector(shotId: string): Promise<void>;
+  directorState: Record<string, DirectorShotState>;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -809,6 +853,141 @@ export function EditorProvider(props: {
     [projectId],
   );
 
+  // ── AI Assistant Director (Task 8) ──
+
+  const [directorState, setDirectorState] = useState<Record<string, DirectorShotState>>({});
+  // Per-shot "highest seq already merged" — lets every poll (interval tick
+  // or one-off refresh) request only new events via ?since=, while events
+  // themselves accumulate in directorState. A ref (not state) because it's
+  // write-then-immediately-read within the same tick, never rendered.
+  const directorSeqRef = useRef<Record<string, number>>({});
+  // Mirrors directorState for the interval poll below, so its 3s timer
+  // (set up once per active/inactive transition, not torn down every tick)
+  // always reads the CURRENT set of running shot ids rather than whatever
+  // was running when the interval was created.
+  const directorStateRef = useRef<Record<string, DirectorShotState>>({});
+  useEffect(() => {
+    directorStateRef.current = directorState;
+  }, [directorState]);
+
+  /** One GET poll for a single shot's run+events, merged into directorState. 404 (no run ever started) resolves to `{ run: null, events: [] }` rather than leaving the shot unloaded, so callers never re-fetch it. */
+  const pollDirectorOnce = useCallback(
+    async (shotId: string) => {
+      const since = directorSeqRef.current[shotId] ?? 0;
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/director?since=${since}`);
+        if (res.status === 404) {
+          setDirectorState((prev) => ({ ...prev, [shotId]: prev[shotId] ?? { run: null, events: [] } }));
+          return;
+        }
+        if (!res.ok) {
+          console.warn("[editor-store] director poll failed:", await res.text());
+          return;
+        }
+        const data = (await res.json()) as { run: DirectorRunView; events: DirectorEventView[] };
+        if (data.events.length > 0) {
+          directorSeqRef.current[shotId] = data.events[data.events.length - 1].seq;
+        }
+        setDirectorState((prev) => {
+          const prevEvents = prev[shotId]?.events ?? [];
+          return { ...prev, [shotId]: { run: data.run, events: [...prevEvents, ...data.events] } };
+        });
+      } catch (err) {
+        console.error("[editor-store] director poll error:", err);
+      }
+    },
+    [projectId],
+  );
+
+  const startDirector = useCallback(
+    async (shotId: string, budgetUsd: number, guidance?: string): Promise<boolean> => {
+      try {
+        const trimmed = guidance?.trim();
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/director`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ budgetUsd, ...(trimmed ? { guidance: trimmed } : {}) }),
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] director start failed:", await res.text());
+          return false;
+        }
+        // A brand-new run starts its own seq count at 0 — reset so the
+        // immediate refresh below fetches its events from the beginning
+        // rather than the previous run's high-water mark.
+        directorSeqRef.current[shotId] = 0;
+        await pollDirectorOnce(shotId);
+        return true;
+      } catch (err) {
+        console.error("[editor-store] director start error:", err);
+        return false;
+      }
+    },
+    [projectId, pollDirectorOnce],
+  );
+
+  const stopDirector = useCallback(
+    async (shotId: string): Promise<void> => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/shots/${shotId}/director/stop`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          console.warn("[editor-store] director stop failed:", await res.text());
+          return;
+        }
+        await pollDirectorOnce(shotId);
+      } catch (err) {
+        console.error("[editor-store] director stop error:", err);
+      }
+    },
+    [projectId, pollDirectorOnce],
+  );
+
+  // "Mounted shot has an active run" — when selection moves onto a shot
+  // whose director status has never been checked this session (e.g. a page
+  // reload while a run is mid-flight), check it once. Guarded by the
+  // directorState entry itself so a checked shot (even one that 404'd) is
+  // never re-fetched by this effect again.
+  useEffect(() => {
+    if (state.selection?.type !== "shot") return;
+    const shotId = state.selection.shotId;
+    if (directorState[shotId]) return;
+    pollDirectorOnce(shotId);
+  }, [state.selection, directorState, pollDirectorOnce]);
+
+  // 3s poll while any shot's director run is `running` (idiom: the batch
+  // poll above). A run turning terminal (awaiting_approval/stopped/failed)
+  // or awaiting_approval drops it out of this set — one final fetch already
+  // happened inside startDirector/stopDirector/the previous tick, so no
+  // extra fetch is needed to catch the transition.
+  const directorPollActive = useMemo(
+    () => Object.values(directorState).some((s) => s.run?.status === "running"),
+    [directorState],
+  );
+  useEffect(() => {
+    if (!directorPollActive) return;
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight || cancelled) return;
+      inFlight = true;
+      try {
+        const runningIds = Object.entries(directorStateRef.current)
+          .filter(([, s]) => s.run?.status === "running")
+          .map(([id]) => id);
+        await Promise.all(runningIds.map((id) => pollDirectorOnce(id)));
+      } finally {
+        inFlight = false;
+      }
+    };
+    const interval = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [directorPollActive, pollDirectorOnce]);
+
   const recommendShots = useCallback(async () => {
     setRecommending(true);
     try {
@@ -1220,6 +1399,9 @@ export function EditorProvider(props: {
     fetchGenerateAllPreview,
     generateAll,
     batchActive,
+    startDirector,
+    stopDirector,
+    directorState,
   };
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
