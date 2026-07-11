@@ -88,10 +88,18 @@ export const CLIP_MODELS: ClipModelSpec[] = [
       generate_audio: false,
       ...(tailImageUrl ? { end_image_url: tailImageUrl } : {}),
       ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
-      // Cast references map 1:1 to fal's `elements` list; each url is a
-      // character/object's frontal image (no secondary angles supported yet).
+      // Cast references map 1:1 to fal's `elements` list. fal's RUNTIME
+      // validator (stricter than the docs page) requires BOTH
+      // frontal_image_url AND reference_image_urls per element — we pass the
+      // same sheet for both since our reference sheets are multi-view.
+      // Verified against a live 422 during the paid smoke run (2026-07-11).
       ...(referenceImageUrls?.length
-        ? { elements: referenceImageUrls.map((url) => ({ frontal_image_url: url })) }
+        ? {
+            elements: referenceImageUrls.map((url) => ({
+              frontal_image_url: url,
+              reference_image_urls: [url],
+            })),
+          }
         : {}),
     }),
   },
