@@ -1280,6 +1280,18 @@ function directorHistoryLabel(run: DirectorRunView): string {
   return `Last run: ${run.status} · $${run.spentUsd.toFixed(2)} spent`;
 }
 
+// Heading shown above the verdict card. A stopped run with a candidate is
+// approvable too (spec + the resolve route's claimRunApproval both allow
+// it — final-review I2), so it gets its own lead-in distinguishing it from
+// the normal awaiting_approval case, rather than reusing "Last run:
+// stopped …", which reads like a dead end when there's actually a
+// candidate the user can still approve.
+function directorVerdictHeading(run: DirectorRunView): string {
+  return run.status === "stopped"
+    ? `Stopped — candidate so far · $${run.spentUsd.toFixed(2)} spent`
+    : directorHistoryLabel(run);
+}
+
 function DirectorFeedLine({ event, budgetUsd }: { event: DirectorEventView; budgetUsd: number }) {
   switch (event.type) {
     case "critique": {
@@ -1406,9 +1418,9 @@ function DirectorGroup({ shot }: { shot: EditorShot }) {
             Stop
           </Button>
         </div>
-      ) : run?.status === "awaiting_approval" ? (
+      ) : run?.status === "awaiting_approval" || (run?.status === "stopped" && run.candidateUrl) ? (
         <div className="space-y-1.5">
-          <p className="text-[10px] text-muted-foreground">{directorHistoryLabel(run)}</p>
+          <p className="text-[10px] text-muted-foreground">{directorVerdictHeading(run)}</p>
           <DirectorVerdictCard shot={shot} run={run} />
         </div>
       ) : (

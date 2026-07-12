@@ -45,3 +45,18 @@ export function assertWithinBudget(
   }
   return { ok: true };
 }
+
+/**
+ * True when a run's metered spend has reached (or exceeded) its budget —
+ * the hard-stop boundary check the direct-shot loop applies at the same
+ * points it re-reads `stopRequested` (final-review finding I1: "Budget can
+ * never be exceeded" is a hard guarantee, but per-tool budget refusals
+ * alone don't stop a run from burning free tool calls / Claude tokens for
+ * the rest of its iterations once the budget is gone). Exact-fit
+ * (spentUsd === budgetUsd) counts as exhausted: assertWithinBudget already
+ * allows the spend that lands exactly on budget, so the boundary check
+ * right after that spend is what stops any further iteration.
+ */
+export function isBudgetExhausted(spentUsd: number, budgetUsd: number): boolean {
+  return spentUsd >= budgetUsd;
+}

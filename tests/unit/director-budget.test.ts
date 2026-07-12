@@ -4,7 +4,7 @@
  * functions — no DB, no network.
  */
 import { describe, it, expect } from "vitest";
-import { usageCostUsd, assertWithinBudget } from "@/lib/director/director-budget";
+import { usageCostUsd, assertWithinBudget, isBudgetExhausted } from "@/lib/director/director-budget";
 
 describe("usageCostUsd", () => {
   it("prices anthropic usage", () => {
@@ -22,5 +22,21 @@ describe("assertWithinBudget", () => {
 
   it("allows exact-fit spends", () => {
     expect(assertWithinBudget(1.0, 1.5, 0.5).ok).toBe(true);
+  });
+});
+
+// Final-review finding I1: the direct-shot loop's hard budget stop reads
+// this at the same boundaries it re-reads stopRequested.
+describe("isBudgetExhausted", () => {
+  it("is false while spend remains under budget", () => {
+    expect(isBudgetExhausted(1.2, 1.5)).toBe(false);
+  });
+
+  it("is true at an exact-fit spend (budget can never be exceeded)", () => {
+    expect(isBudgetExhausted(1.5, 1.5)).toBe(true);
+  });
+
+  it("is true once spend has overshot the budget", () => {
+    expect(isBudgetExhausted(1.9, 1.5)).toBe(true);
   });
 });

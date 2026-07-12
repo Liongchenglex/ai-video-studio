@@ -38,7 +38,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { inngest } from "../client";
 import { db } from "@/lib/db";
-import { directorRuns, projects, shots, beats, entities, type Project, type Shot, type DirectorRun } from "@/lib/db/schema";
+import { projects, shots, beats, entities, type Project, type Shot, type DirectorRun } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { r2Client } from "@/lib/r2";
 import {
@@ -47,11 +47,18 @@ import {
   capabilityInventory,
   type DirectorRunCtx,
 } from "@/lib/director/director-tools";
-import { usageCostUsd, assertWithinBudget } from "@/lib/director/director-budget";
+import { usageCostUsd, assertWithinBudget, isBudgetExhausted } from "@/lib/director/director-budget";
 import { buildBriefingText, gatherBriefingImages, type BriefingImage, type DirectorBriefingData } from "@/lib/director/director-context";
 import { sampleVideoFrames } from "@/lib/director/frame-sampler";
 import { settingsFromShot, loadOrderedProjectShots, type DirectingSettings } from "@/lib/shot-clip-generation";
-import { appendRunEvent, addRunSpend, addRunProposal, setRunCandidate, getRunById } from "@/lib/director/director-run";
+import {
+  appendRunEvent,
+  addRunSpend,
+  addRunProposal,
+  setRunCandidate,
+  getRunById,
+  writeTerminalRunStatus,
+} from "@/lib/director/director-run";
 
 const MAX_ITERATIONS = 5;
 const MAX_ACT_TURNS = 8;
@@ -244,10 +251,15 @@ async function runAssessStep(
     // route maps these into frameUrls at read time.
     enrichedInput.frameKeys = [candidateKey("frame-0.png"), candidateKey("frame-3.png")];
   }
-  await getDirectorTool("record_critique")!.execute(
-    buildDirectorCtx(project, shot, runId, scratch, false),
-    enrichedInput,
-  );
+  // Security (final-review C1): appended DIRECTLY via appendRunEvent, not
+  // through record_critique's own execute() — that execute() is the
+  // model-controlled path (the model can also call record_critique itself
+  // during the act step) and unconditionally strips any frameKeys it
+  // receives, precisely so a steered model can never get its own
+  // (possibly foreign) R2 keys persisted into a critique event. The
+  // frameKeys built above are server-side and trusted, so this is the one
+  // legitimate place they get written.
+  await appendRunEvent(runId, "critique", enrichedInput);
 
   const allPass = dimensions.length > 0 && dimensions.every((d) => d.pass === true);
   return { dimensions, summary, allPass, hasCandidate };
@@ -503,17 +515,20 @@ async function finalizeRun(
     verdict = `Iteration limit reached — best effort within ${MAX_ITERATIONS} passes.`;
   }
 
-  await db.update(directorRuns).set({ status, verdict, settingsSnapshot }).where(eq(directorRuns.id, runId));
+  // M1 (final-review, cheap replay guard): only writes while the run is
+  // still "running" — an Inngest replay of finalize racing a fast user
+  // approve (which flips status to "approved" via claimRunApproval) must
+  // never regress the run back to awaiting_approval/stopped. A 0-row match
+  // means someone else already resolved this run first; skip quietly.
+  await writeTerminalRunStatus(runId, { status, verdict, settingsSnapshot });
 }
 
 /** Unrecoverable-error terminal write: one "error" event + status "failed". Spend already persisted incrementally is left as-is. */
 async function failRun(runId: string, err: unknown): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   await appendRunEvent(runId, "error", { message });
-  await db
-    .update(directorRuns)
-    .set({ status: "failed", verdict: `Run failed: ${message}` })
-    .where(eq(directorRuns.id, runId));
+  // Same replay guard as finalizeRun above — see writeTerminalRunStatus.
+  await writeTerminalRunStatus(runId, { status: "failed", verdict: `Run failed: ${message}` });
 }
 
 export const directShotFn = inngest.createFunction(
@@ -568,6 +583,17 @@ export const directShotFn = inngest.createFunction(
           stopped = true;
           break;
         }
+        // Budget hard stop (final-review I1): "Budget can never be
+        // exceeded" is a hard guarantee, but per-tool budget refusals
+        // alone only block individual paid calls — without this, a run
+        // that keeps making free tool calls (or Claude calls that meter
+        // token cost) could run all MAX_ITERATIONS after its budget is
+        // gone. Reuses the existing budgetRefusalSeen/budget-verdict path
+        // in finalizeRun rather than a parallel one.
+        if (isBudgetExhausted(boundary.spentUsd, boundary.budgetUsd)) {
+          budgetRefusalSeen = true;
+          break;
+        }
 
         const assessed = await step.run(`assess-${i}`, () => runAssessStep(anthropic, project, shot, runId, scratch));
 
@@ -581,6 +607,10 @@ export const directShotFn = inngest.createFunction(
         const preAct = await getRunById(runId);
         if (!preAct || preAct.stopRequested) {
           stopped = true;
+          break;
+        }
+        if (isBudgetExhausted(preAct.spentUsd, preAct.budgetUsd)) {
+          budgetRefusalSeen = true;
           break;
         }
 
@@ -604,7 +634,26 @@ export const directShotFn = inngest.createFunction(
         }
 
         if (acted.candidateGenerated) {
-          await step.run(`frames-${i}`, () => persistCandidateFrames(project, shot, runId));
+          // Resilience (final-review I3): a frame-sampling failure (e.g.
+          // ffmpeg-static broken on the deploy target) must never take
+          // down an otherwise-successful, already-paid-for run. Caught
+          // here rather than left to the top-level catch, which would
+          // route through failRun and strand the paid candidate in a
+          // `failed` run the user can never see or approve.
+          // gatherBriefingImages already tolerates missing candidate
+          // frames (it probes each key with a GET and skips silently on
+          // failure), so the loop can just continue without them.
+          try {
+            await step.run(`frames-${i}`, () => persistCandidateFrames(project, shot, runId));
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            await step.run(`frames-${i}-error`, () =>
+              appendRunEvent(runId, "error", {
+                step: "frames",
+                message: `Candidate frames could not be sampled — continuing without frames. (${detail})`,
+              }),
+            );
+          }
         }
       }
 

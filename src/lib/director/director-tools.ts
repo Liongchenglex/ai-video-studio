@@ -684,8 +684,19 @@ export const DIRECTOR_TOOLS: DirectorTool[] = [
       required: ["dimensions", "summary"],
     },
     estCostUsd: () => 0,
+    // Security (final-review C1): `frameKeys` is NEVER taken from the
+    // model's input — it names R2 objects, and this tool's input is
+    // model-controlled (a steered model could name another run/user's
+    // keys, which the director GET route would then presign into
+    // downloadable URLs). The loop's assess step (direct-shot.ts) is the
+    // only place that ever attaches real frameKeys, and it does so by
+    // appending the critique event directly rather than by going through
+    // this execute() — so any `frameKeys` that DOES arrive here came from
+    // the model and must be dropped before persisting.
     execute: async (ctx, input) => {
-      await ctx.appendEvent("critique", input);
+      const safeInput = { ...input };
+      delete safeInput.frameKeys;
+      await ctx.appendEvent("critique", safeInput);
       return { ok: true, message: "Critique recorded." };
     },
   },

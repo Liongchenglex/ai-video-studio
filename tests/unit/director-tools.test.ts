@@ -185,6 +185,43 @@ describe("DIRECTOR_TOOLS registry invariants", () => {
   });
 });
 
+// Final-review finding C1: record_critique's execute() must never persist a
+// model-supplied `frameKeys` — that field names R2 objects, and this tool's
+// input is model-controlled. The loop's assess step (direct-shot.ts) is the
+// only legitimate source of frameKeys, and it appends the critique event
+// directly via appendRunEvent rather than through this execute() at all, so
+// any frameKeys arriving HERE necessarily came from the model and must be
+// dropped before the event is persisted.
+describe("record_critique (C1 — strips model-supplied frameKeys)", () => {
+  it("drops frameKeys from the persisted event when the model supplies them", async () => {
+    const ctx = makeCtx();
+    const r = await getDirectorTool("record_critique")!.execute(ctx, {
+      dimensions: [{ name: "framing", pass: true }],
+      summary: "Looks good.",
+      frameKeys: ["projects/other-project/shots/other-shot/director/other-run/frame-0.png"],
+    });
+    expect(r.ok).toBe(true);
+    expect(ctx.appendEvent).toHaveBeenCalledTimes(1);
+    const [type, payload] = (ctx.appendEvent as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(type).toBe("critique");
+    expect(payload).not.toHaveProperty("frameKeys");
+    expect(payload).toEqual({
+      dimensions: [{ name: "framing", pass: true }],
+      summary: "Looks good.",
+    });
+  });
+
+  it("persists dimensions/summary unchanged when no frameKeys are supplied", async () => {
+    const ctx = makeCtx();
+    await getDirectorTool("record_critique")!.execute(ctx, {
+      dimensions: [],
+      summary: "No candidate yet.",
+    });
+    const [, payload] = (ctx.appendEvent as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(payload).toEqual({ dimensions: [], summary: "No candidate yet." });
+  });
+});
+
 describe("Kontext tools (edit_start_image, create_custom_end_frame)", () => {
   it("both estimate $0.04", () => {
     expect(getDirectorTool("edit_start_image")!.estCostUsd({})).toBe(0.04);

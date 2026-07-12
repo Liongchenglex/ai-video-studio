@@ -249,3 +249,43 @@ export async function claimRunRejection(runId: string, guidance?: string | null)
     .returning({ id: directorRuns.id });
   return rows.length > 0;
 }
+
+/**
+ * Terminal-write guard for the direct-shot loop's finalize/fail steps
+ * (final-review finding M1). finalizeRun/failRun (direct-shot.ts) used to
+ * write status unconditionally — an Inngest replay of finalize racing a
+ * fast user approve (which flips status to "approved" via
+ * claimRunApproval) would regress it back to awaiting_approval/stopped/
+ * failed. Same conditional-UPDATE shape as claimRunApproval/
+ * claimRunRejection: only writes while the run is still "running", so a
+ * replay that finds the run already resolved is a correct no-op, not a
+ * corruption. Returns true iff this call's write landed — callers should
+ * treat `false` as "skip quietly", not an error.
+ */
+export async function writeTerminalRunStatus(
+  runId: string,
+  patch: { status: "awaiting_approval" | "stopped" | "failed"; verdict: string; settingsSnapshot?: Record<string, unknown> },
+): Promise<boolean> {
+  const rows = await db
+    .update(directorRuns)
+    .set(patch)
+    .where(and(eq(directorRuns.id, runId), eq(directorRuns.status, "running")))
+    .returning({ id: directorRuns.id });
+  return rows.length > 0;
+}
+
+/**
+ * Defense-in-depth for the director GET route's frame presigning
+ * (final-review finding C1). record_critique's execute() (director-tools.ts)
+ * already strips any model-supplied `frameKeys` before persisting a critique
+ * event — the loop's assess step is the only thing that ever attaches real
+ * frameKeys, and it does so server-side, outside the model-controlled tool
+ * input. This is the second layer: even if a malformed/legacy event row
+ * somehow carried a foreign key, the route only ever presigns keys that fall
+ * under the given run's own R2 prefix, so a requester can never be handed a
+ * presigned URL for another run's (or another user's) objects.
+ */
+export function filterRunFrameKeys(keys: unknown, runFramePrefix: string): string[] {
+  if (!Array.isArray(keys)) return [];
+  return keys.filter((k): k is string => typeof k === "string" && k.startsWith(runFramePrefix));
+}

@@ -17,7 +17,13 @@
  *      direct-shot loop writes keys because a presigned URL embedded in a
  *      DB row would go stale) — this route presigns them into
  *      `payload.frameUrls` on every read, on a copy of the event, so the
- *      stored row is never mutated.
+ *      stored row is never mutated. Defense in depth (final-review C1):
+ *      only keys under THIS run's own R2 prefix are ever presigned — a
+ *      stray/foreign key in a malformed event payload is dropped, never
+ *      turned into a downloadable URL for an object the requester may not
+ *      own. record_critique's execute() (director-tools.ts) is the primary
+ *      defense — it strips any model-supplied frameKeys before persisting
+ *      — this is the second layer.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -34,7 +40,13 @@ import {
 } from "@/lib/api-utils";
 import { getDownloadUrl } from "@/lib/r2";
 import { inngest } from "@/inngest";
-import { createRun, getRunById, getRunWithEvents, activeRunForShot } from "@/lib/director/director-run";
+import {
+  createRun,
+  getRunById,
+  getRunWithEvents,
+  activeRunForShot,
+  filterRunFrameKeys,
+} from "@/lib/director/director-run";
 import type { DirectorEvent } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
@@ -43,13 +55,22 @@ type Params = { params: Promise<{ id: string; shotId: string }> };
  * Presigns a critique event's `frameKeys` (R2 keys) into `frameUrls`
  * (presigned download URLs) for this one response — returns a new event
  * object, never mutates the DB row passed in. Events of any other type, or
- * critique events with no (or malformed) frameKeys, pass through unchanged.
+ * critique events with no frameKeys array, pass through unchanged.
+ *
+ * Security (final-review C1): `runFramePrefix` scopes which keys are
+ * eligible — anything in `frameKeys` that isn't a string under this run's
+ * own R2 prefix (`projects/{projectId}/shots/{shotId}/director/{run.id}/`)
+ * is silently dropped rather than presigned. record_critique's execute()
+ * already refuses to persist model-supplied frameKeys at all, so this
+ * should never trigger in practice — it's the belt to that suspenders.
  */
-async function presignEventFrames(event: DirectorEvent): Promise<DirectorEvent> {
+async function presignEventFrames(event: DirectorEvent, runFramePrefix: string): Promise<DirectorEvent> {
   if (event.type !== "critique") return event;
   const { frameKeys, ...rest } = event.payload;
-  if (!Array.isArray(frameKeys) || frameKeys.some((k) => typeof k !== "string")) return event;
-  const frameUrls = await Promise.all((frameKeys as string[]).map((key) => getDownloadUrl(key)));
+  if (!Array.isArray(frameKeys)) return event;
+  const validKeys = filterRunFrameKeys(frameKeys, runFramePrefix);
+  if (validKeys.length === 0) return event;
+  const frameUrls = await Promise.all(validKeys.map((key) => getDownloadUrl(key)));
   return { ...event, payload: { ...rest, frameUrls } };
 }
 
@@ -202,7 +223,8 @@ export async function GET(request: NextRequest, { params }: Params) {
   const { run, events } = result;
 
   const candidateUrl = run.clipCandidatePath ? await getDownloadUrl(run.clipCandidatePath) : null;
-  const presignedEvents = await Promise.all(events.map(presignEventFrames));
+  const runFramePrefix = `projects/${id}/shots/${shotId}/director/${run.id}/`;
+  const presignedEvents = await Promise.all(events.map((event) => presignEventFrames(event, runFramePrefix)));
 
   return NextResponse.json({ run: { ...run, candidateUrl }, events: presignedEvents });
 }
