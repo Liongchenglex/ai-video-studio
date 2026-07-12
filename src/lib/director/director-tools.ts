@@ -13,12 +13,15 @@
  * DirectorTool has a description >= 20 chars, a truthy inputSchema, and an
  * estCostUsd function.
  *
- * Stage 1 (this task): scratch setting tools (camera, ends-on, negative
- * prompt, duration, model, entity-refs toggle), generate_candidate_clip
- * (the only paid tool here), and the two loop-interpreted no-ops
- * record_critique / finish. Stage 2 tools (Kontext image edits, entity
- * tag/create) land in later tasks by pushing more entries into
- * DIRECTOR_TOOLS — this file's shape does not change.
+ * Stage 1: scratch setting tools (camera, ends-on, negative prompt,
+ * duration, model, entity-refs toggle), generate_candidate_clip, and the
+ * two loop-interpreted no-ops record_critique / finish. Stage 2 (Task 10,
+ * this task): the two Kontext image-edit tools (edit_start_image,
+ * create_custom_end_frame — both ~$0.04, both validate their instruction
+ * length before any fal call via runKontextEditToKey in
+ * shot-frame-edit.ts). Remaining Stage 2 tools (entity tag/create) land in
+ * later tasks by pushing more entries into DIRECTOR_TOOLS — this file's
+ * shape does not change.
  */
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Project, Shot } from "@/lib/db/schema";
@@ -41,6 +44,10 @@ import {
   isClipModelId,
   resolveClipDuration,
 } from "@/lib/clip-models";
+import {
+  FRAME_EDIT_INSTRUCTION_MAX_CHARS,
+  runKontextEditToKey,
+} from "@/lib/shot-frame-edit";
 
 /**
  * Everything a tool's execute() needs, supplied by the Inngest loop
@@ -110,6 +117,22 @@ const CLIP_MODEL_IDS = CLIP_MODELS.map((m) => m.id);
 /** Resolves the scratch's clip model spec, falling back to the app default — mirrors renderDirectedClip's own fallback. */
 function scratchModelSpec(scratch: Pick<DirectingSettings, "clipModel">) {
   return getClipModel(scratch.clipModel) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
+}
+
+/**
+ * Shared instruction validator for the Kontext tools below — checked
+ * BEFORE any fal call (and unit-testable without network) so a too-long
+ * or empty instruction never spends the run's budget.
+ */
+function validateKontextInstruction(input: Record<string, unknown>): string | null {
+  const instruction = input.instruction;
+  if (typeof instruction !== "string" || instruction.trim().length === 0) {
+    return "instruction must be a non-empty string.";
+  }
+  if (instruction.length > FRAME_EDIT_INSTRUCTION_MAX_CHARS) {
+    return `instruction must be ${FRAME_EDIT_INSTRUCTION_MAX_CHARS} characters or fewer.`;
+  }
+  return null;
 }
 
 export const DIRECTOR_TOOLS: DirectorTool[] = [
@@ -302,6 +325,62 @@ export const DIRECTOR_TOOLS: DirectorTool[] = [
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         return { ok: false, message: `Candidate clip generation failed: ${detail}` };
+      }
+    },
+  },
+  {
+    name: "edit_start_image",
+    description:
+      "Edits the run's scratch start image in place via FLUX Kontext, following a natural-language instruction (max 500 characters). Paid — costs about $0.04 per call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        instruction: { type: "string", maxLength: FRAME_EDIT_INSTRUCTION_MAX_CHARS },
+      },
+      required: ["instruction"],
+    },
+    estCostUsd: () => 0.04,
+    execute: async (ctx, input) => {
+      const validationError = validateKontextInstruction(input);
+      if (validationError) return { ok: false, message: validationError };
+      const instruction = input.instruction as string;
+      try {
+        const outputKey = ctx.candidateKey("scratch-image.png");
+        await runKontextEditToKey(ctx.scratch.imagePath, instruction, outputKey);
+        ctx.scratch.imagePath = outputKey;
+        ctx.scratchImageEdited = true;
+        return recordAction(ctx, "edit_start_image", input, "Start image edited.");
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        return { ok: false, message: `Start image edit failed: ${detail}` };
+      }
+    },
+  },
+  {
+    name: "create_custom_end_frame",
+    description:
+      "Authors a custom end frame from the run's scratch start image via FLUX Kontext, following a natural-language instruction (max 500 characters). Paid — costs about $0.04 per call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        instruction: { type: "string", maxLength: FRAME_EDIT_INSTRUCTION_MAX_CHARS },
+      },
+      required: ["instruction"],
+    },
+    estCostUsd: () => 0.04,
+    execute: async (ctx, input) => {
+      const validationError = validateKontextInstruction(input);
+      if (validationError) return { ok: false, message: validationError };
+      const instruction = input.instruction as string;
+      try {
+        const outputKey = ctx.candidateKey("end-frame.png");
+        await runKontextEditToKey(ctx.scratch.imagePath, instruction, outputKey);
+        ctx.scratch.endFramePath = outputKey;
+        ctx.scratch.endFrameStatus = "done";
+        return recordAction(ctx, "create_custom_end_frame", input, "Custom end frame created.");
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        return { ok: false, message: `End frame creation failed: ${detail}` };
       }
     },
   },

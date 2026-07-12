@@ -119,4 +119,44 @@ describe("DIRECTOR_TOOLS registry invariants", () => {
     expect(toAnthropicTools()).toHaveLength(DIRECTOR_TOOLS.length);
     for (const t of DIRECTOR_TOOLS) expect(capabilityInventory()).toContain(t.name);
   });
+
+  it("has 11 tools registered", () => {
+    expect(DIRECTOR_TOOLS).toHaveLength(11);
+  });
+});
+
+describe("Kontext tools (edit_start_image, create_custom_end_frame)", () => {
+  it("both estimate $0.04", () => {
+    expect(getDirectorTool("edit_start_image")!.estCostUsd({})).toBe(0.04);
+    expect(getDirectorTool("create_custom_end_frame")!.estCostUsd({})).toBe(0.04);
+  });
+
+  it("edit_start_image rejects an instruction over 500 chars before any fal call", async () => {
+    const ctx = makeCtx();
+    const r = await getDirectorTool("edit_start_image")!.execute(ctx, {
+      instruction: "x".repeat(501),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/500/);
+    expect(ctx.scratchImageEdited).toBe(false);
+    expect(ctx.appendEvent).not.toHaveBeenCalled();
+  });
+
+  it("edit_start_image rejects an empty instruction before any fal call", async () => {
+    const ctx = makeCtx();
+    const r = await getDirectorTool("edit_start_image")!.execute(ctx, { instruction: "   " });
+    expect(r.ok).toBe(false);
+    expect(ctx.appendEvent).not.toHaveBeenCalled();
+  });
+
+  it("create_custom_end_frame rejects an instruction over 500 chars before any fal call", async () => {
+    const ctx = makeCtx();
+    const r = await getDirectorTool("create_custom_end_frame")!.execute(ctx, {
+      instruction: "y".repeat(600),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/500/);
+    expect(ctx.scratch.endFramePath).toBeNull();
+    expect(ctx.appendEvent).not.toHaveBeenCalled();
+  });
 });
