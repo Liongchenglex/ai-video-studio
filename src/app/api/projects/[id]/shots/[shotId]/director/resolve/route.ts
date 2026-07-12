@@ -224,6 +224,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     // running the copies/patch before the claim let a losing request mutate
     // the shot and still lose the race to a concurrent reject/dismiss,
     // leaving the shot promoted while the run ended up rejected.
+    const preClaimStatus = run.status;
     const won = await claimRunApproval(run.id);
     if (!won) {
       return NextResponse.json({ error: "This run was already resolved" }, { status: 409 });
@@ -250,7 +251,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         step: "approve",
         message: `Partial promotion while applying candidate: ${message}`,
       });
-      await db.update(directorRuns).set({ status: "awaiting_approval" }).where(eq(directorRuns.id, run.id));
+      await db.update(directorRuns).set({ status: preClaimStatus }).where(eq(directorRuns.id, run.id));
       return NextResponse.json({ error: "Failed to promote approved candidate" }, { status: 500 });
     }
 
