@@ -75,8 +75,10 @@ function StatusBadge({ status }: { status: RollupStatus }) {
 }
 
 function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; index: number }) {
-  const { beats, entities, selection, select, generateImage, generateClip } = useEditor();
+  const { beats, entities, selection, select, generateImage, generateClip, directorState } =
+    useEditor();
   const status = rollupStatus(shot);
+  const directorRunStatus = directorState[shot.id]?.run?.status;
   const range = absoluteShotRange(shot, beats);
   const taggedEntities = entitiesOfShot(shot, entities);
   // Shots may span beat boundaries — narration is every overlapped beat's
@@ -121,6 +123,22 @@ function ShotCard({ shot, beat, index }: { shot: EditorShot; beat: EditorBeat; i
             className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] leading-tight text-white"
           >
             ▸▮
+          </span>
+        )}
+        {directorRunStatus === "running" && (
+          <span
+            title="AI Director running"
+            className="absolute bottom-1 right-1 animate-pulse rounded bg-black/60 px-1 text-[10px] leading-tight text-white"
+          >
+            🎬
+          </span>
+        )}
+        {directorRunStatus === "awaiting_approval" && (
+          <span
+            title="Director verdict waiting"
+            className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] leading-tight text-white"
+          >
+            🎬
           </span>
         )}
       </div>

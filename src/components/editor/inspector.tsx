@@ -49,6 +49,7 @@ import {
 } from "@/lib/clip-models";
 import { CAMERA_MOVES } from "@/lib/clip-camera";
 import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
+import { DirectorVerdictCard } from "@/components/editor/director-verdict-card";
 import {
   useEditor,
   absoluteShotRange,
@@ -58,6 +59,8 @@ import {
   type EditorBeat,
   type EditorEntity,
   type EditorShot,
+  type DirectorRunView,
+  type DirectorEventView,
 } from "@/components/editor/editor-store";
 
 const ENTITY_TYPE_ICON: Record<EditorEntity["type"], LucideIcon> = {
@@ -1233,6 +1236,8 @@ function ShotEditPanel({
         )}
       </InspectorGroup>
 
+      <DirectorGroup shot={shot} />
+
       {/* Timeline ops */}
       <div className="flex gap-2">
         <Button
@@ -1254,6 +1259,206 @@ function ShotEditPanel({
         </Button>
       </div>
     </>
+  );
+}
+
+// ─── AI Director group (fifth inspector group, below Sound) ──────────
+//
+// Three states per shot, driven entirely by directorState[shot.id] (Task
+// 8): at rest (budget/guidance/start — no run, or a terminal one the user
+// can restart), running (live feed + Stop), and awaiting_approval (history
+// row + the verdict card — DirectorVerdictCard, Task 14 — which owns
+// approve/reject-retry/dismiss). A run counts as "active" (blocks a fresh
+// start, matches the route's own 409 check) for status running OR
+// awaiting_approval.
+
+const DIRECTOR_BUDGET_OPTIONS = [0.75, 1.5, 3.0];
+const DIRECTOR_DEFAULT_BUDGET = 1.5;
+const DIRECTOR_GUIDANCE_MAX = 500;
+
+function directorHistoryLabel(run: DirectorRunView): string {
+  return `Last run: ${run.status} · $${run.spentUsd.toFixed(2)} spent`;
+}
+
+// Heading shown above the verdict card. A stopped run with a candidate is
+// approvable too (spec + the resolve route's claimRunApproval both allow
+// it — final-review I2), so it gets its own lead-in distinguishing it from
+// the normal awaiting_approval case, rather than reusing "Last run:
+// stopped …", which reads like a dead end when there's actually a
+// candidate the user can still approve.
+function directorVerdictHeading(run: DirectorRunView): string {
+  return run.status === "stopped"
+    ? `Stopped — candidate so far · $${run.spentUsd.toFixed(2)} spent`
+    : directorHistoryLabel(run);
+}
+
+function DirectorFeedLine({ event, budgetUsd }: { event: DirectorEventView; budgetUsd: number }) {
+  switch (event.type) {
+    case "critique": {
+      const payload = event.payload as {
+        summary?: unknown;
+        dimensions?: Array<{ name?: unknown; pass?: unknown; note?: unknown }>;
+        frameUrls?: unknown;
+      };
+      const dimensions = Array.isArray(payload.dimensions) ? payload.dimensions : [];
+      const frameUrls = Array.isArray(payload.frameUrls)
+        ? payload.frameUrls.filter((u): u is string => typeof u === "string")
+        : [];
+      return (
+        <div className="space-y-1 rounded border border-dashed p-1.5">
+          <p className="text-xs">🎬 {typeof payload.summary === "string" ? payload.summary : ""}</p>
+          {dimensions.length > 0 && (
+            <ul className="space-y-0.5 pl-3 text-[10px] text-muted-foreground">
+              {dimensions.map((d, i) => (
+                <li key={i}>
+                  {d.pass ? "✓" : "✗"} {typeof d.name === "string" ? d.name : ""}
+                  {typeof d.note === "string" && d.note ? ` — ${d.note}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+          {frameUrls.length > 0 && (
+            <div className="flex gap-1.5">
+              {frameUrls.map((url, i) => (
+                // eslint-disable-next-line @next/next/no-img-element -- presigned R2 URL, not a static/Next-optimizable asset
+                <img
+                  key={i}
+                  src={url}
+                  alt={i === 0 ? "Candidate first frame" : "Candidate last frame"}
+                  className="h-12 w-20 rounded object-cover"
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "action": {
+      const payload = event.payload as { message?: unknown };
+      return <p className="text-xs">🔧 {typeof payload.message === "string" ? payload.message : ""}</p>;
+    }
+    case "cost": {
+      const payload = event.payload as { usd?: unknown; runningTotal?: unknown };
+      const usd = typeof payload.usd === "number" ? payload.usd : 0;
+      const runningTotal = typeof payload.runningTotal === "number" ? payload.runningTotal : 0;
+      return (
+        <p className="text-xs text-muted-foreground">
+          💸 +${usd.toFixed(2)} → ${runningTotal.toFixed(2)} / ${budgetUsd.toFixed(2)}
+        </p>
+      );
+    }
+    case "error": {
+      const payload = event.payload as { message?: unknown };
+      return <p className="text-xs text-destructive">❌ {typeof payload.message === "string" ? payload.message : ""}</p>;
+    }
+    case "note": {
+      const payload = event.payload as { message?: unknown };
+      return (
+        <p className="text-xs text-muted-foreground">
+          📝 {typeof payload.message === "string" ? payload.message : ""}
+        </p>
+      );
+    }
+    default:
+      return null;
+  }
+}
+
+function DirectorGroup({ shot }: { shot: EditorShot }) {
+  const { directorState, startDirector, stopDirector } = useEditor();
+  const [budgetUsd, setBudgetUsd] = useState(DIRECTOR_DEFAULT_BUDGET);
+  const [guidance, setGuidance] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+
+  // Fresh draft whenever the selection moves to a different shot.
+  useEffect(() => {
+    setBudgetUsd(DIRECTOR_DEFAULT_BUDGET);
+    setGuidance("");
+  }, [shot.id]);
+
+  const shotState = directorState[shot.id];
+  const run = shotState?.run ?? null;
+  const isActive = run?.status === "running" || run?.status === "awaiting_approval";
+  const noDoneImage = !shot.imagePath || shot.imageStatus !== "done";
+
+  const handleStart = async () => {
+    setStarting(true);
+    try {
+      await startDirector(shot.id, budgetUsd, guidance);
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setStopping(true);
+    try {
+      await stopDirector(shot.id);
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  return (
+    <InspectorGroup label="AI Director">
+      {run?.status === "running" ? (
+        <div className="space-y-1.5">
+          <div className="max-h-64 space-y-1.5 overflow-y-auto">
+            {(shotState?.events.length ?? 0) === 0 ? (
+              <p className="text-[10px] text-muted-foreground">Starting…</p>
+            ) : (
+              shotState!.events.map((event) => (
+                <DirectorFeedLine key={event.id} event={event} budgetUsd={run.budgetUsd} />
+              ))
+            )}
+          </div>
+          <Button size="sm" variant="outline" onClick={handleStop} disabled={stopping}>
+            {stopping && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+            Stop
+          </Button>
+        </div>
+      ) : run?.status === "awaiting_approval" || (run?.status === "stopped" && run.candidateUrl) ? (
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-muted-foreground">{directorVerdictHeading(run)}</p>
+          <DirectorVerdictCard shot={shot} run={run} />
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {run && <p className="text-[10px] text-muted-foreground">{directorHistoryLabel(run)}</p>}
+          <div className="flex gap-2">
+            <select
+              value={budgetUsd}
+              onChange={(e) => setBudgetUsd(Number(e.target.value))}
+              className="rounded border bg-background p-1.5 text-xs"
+            >
+              {DIRECTOR_BUDGET_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  ${opt.toFixed(2)}
+                </option>
+              ))}
+            </select>
+            <input
+              value={guidance}
+              onChange={(e) => setGuidance(e.target.value)}
+              maxLength={DIRECTOR_GUIDANCE_MAX}
+              placeholder='e.g. "the dog should react to the lantern"'
+              className="min-w-0 flex-1 rounded border bg-background p-1.5 text-xs"
+            />
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={handleStart}
+            disabled={noDoneImage || isActive || starting}
+            title={noDoneImage ? "Generate the shot's still first" : undefined}
+          >
+            {starting && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+            Direct this shot
+          </Button>
+        </div>
+      )}
+    </InspectorGroup>
   );
 }
 

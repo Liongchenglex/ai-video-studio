@@ -11,8 +11,10 @@ export { inngest } from "./client";
 
 import { generateMusicFn } from "./functions/generate-music";
 import { generateBatchFn } from "./functions/generate-batch";
+import { directShotFn } from "./functions/direct-shot";
 
 export const functions = [
   generateMusicFn,
   generateBatchFn,
+  directShotFn,
 ];

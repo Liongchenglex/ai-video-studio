@@ -35,6 +35,14 @@
  * these to their cast/element-reference param (see kling-v3-pro's
  * buildInput). Never fails the clip — resolveClipReferences reports why
  * refs were skipped via refsSkippedReason instead.
+ *
+ * AI Assistant Director task 3: the resolution/upload/fal/R2 body lives in
+ * renderDirectedClip(project, shotId, settings: DirectingSettings,
+ * outputR2Key) — it never touches the shots row. generateShotClip is a
+ * thin orchestrator: flip clipStatus → settingsFromShot(shot) (pure
+ * mapper) → renderDirectedClip to the standard clip.mp4 key → shot-row
+ * success update / catch-mark-failed-rethrow. This lets AI-director
+ * candidate rendering share the exact same pathway real shots use.
  */
 import { db } from "@/lib/db";
 import { shots, beats, entities, type Project, type Shot } from "@/lib/db/schema";
@@ -87,19 +95,19 @@ async function loadTaggedEntities(projectId: string, referencedEntityIds: string
 }
 
 /**
- * Resolves the shot's entity references and uploads each ready sheet to fal
- * storage. The pure keep/skip decision lives in resolveClipReferences; this
- * owns only the DB load (loadTaggedEntities) and the uploads. Returns the
- * fal URLs for buildInput plus the applied count / skip reason for the
- * response and done-log.
+ * Resolves the entity references named in settings and uploads each ready
+ * sheet to fal storage. The pure keep/skip decision lives in
+ * resolveClipReferences; this owns only the DB load (loadTaggedEntities,
+ * project-scoped) and the uploads. Returns the fal URLs for buildInput
+ * plus the applied count / skip reason for the response and done-log.
  */
 async function resolveAndUploadReferences(
   project: Project,
-  shot: Shot,
+  settings: Pick<DirectingSettings, "referencedEntityIds" | "useEntityRefs">,
   spec: Pick<ClipModelSpec, "supportsReferences">,
 ): Promise<{ referenceImageUrls?: string[]; refsApplied: number; refsSkippedReason?: RefsSkipReason }> {
-  const taggedEntities = await loadTaggedEntities(project.id, shot.referencedEntityIds);
-  const refs = resolveClipReferences({ useEntityRefs: shot.useEntityRefs, spec, taggedEntities });
+  const taggedEntities = await loadTaggedEntities(project.id, settings.referencedEntityIds);
+  const refs = resolveClipReferences({ useEntityRefs: settings.useEntityRefs, spec, taggedEntities });
   if (refs.sheetPaths.length === 0) {
     return { refsApplied: 0, ...(refs.skipReason ? { refsSkippedReason: refs.skipReason } : {}) };
   }
@@ -126,150 +134,247 @@ export interface GenerateShotClipResult {
   refsSkippedReason?: RefsSkipReason;
 }
 
+/**
+ * Everything clip resolution needs, decoupled from the shots row. Lets
+ * renderDirectedClip serve both the real shot pathway (via
+ * settingsFromShot) and future AI-director candidate pathways that never
+ * touch the shots table, while sharing one resolution/upload/fal/R2 body.
+ */
+export interface DirectingSettings {
+  imagePath: string; // start still (real or scratch)
+  motionPrompt: string;
+  clipModel: string | null;
+  cameraMove: string | null;
+  cameraStrength: string | null;
+  endsOn: "free" | "next" | "custom";
+  endFramePath: string | null;
+  endFrameStatus: string | null;
+  clipDurationChoice: number | null;
+  negativePrompt: string | null; // shot-level override
+  useEntityRefs: boolean;
+  referencedEntityIds: string[];
+  slotSeconds: number | null;
+}
+
+/** One shot row in TRUE TIMELINE ORDER, as returned by loadOrderedProjectShots. */
+export interface OrderedProjectShot {
+  id: string;
+  beatId: string | null;
+  startInBeat: number | null;
+  sortOrder: number;
+  imagePath: string | null;
+  imageStatus: string | null;
+  imagePrompt: string;
+  endsOn: string;
+}
+
+/**
+ * Loads every shot in the project plus its beats and returns them in TRUE
+ * TIMELINE ORDER (orderShotsByTimeline) — the canonical "what's before/after
+ * this shot" query. Originally inlined once here (for endsOn: "next"
+ * resolution) and once more in director-context.ts (for neighbor image
+ * gathering); extracted to a single shared query (AI Assistant Director
+ * task 7 carry-forward) since both — and now the direct-shot loop's neighbor
+ * TEXT (imagePrompt/endsOn) — need the identical ordering.
+ */
+export async function loadOrderedProjectShots(projectId: string): Promise<OrderedProjectShot[]> {
+  const projectBeats = await db
+    .select({ id: beats.id, sortOrder: beats.sortOrder })
+    .from(beats)
+    .where(eq(beats.projectId, projectId))
+    .orderBy(asc(beats.sortOrder));
+  const projectShots = await db
+    .select({
+      id: shots.id,
+      beatId: shots.beatId,
+      startInBeat: shots.startInBeat,
+      sortOrder: shots.sortOrder,
+      imagePath: shots.imagePath,
+      imageStatus: shots.imageStatus,
+      imagePrompt: shots.imagePrompt,
+      endsOn: shots.endsOn,
+    })
+    .from(shots)
+    .where(eq(shots.projectId, projectId));
+  return orderShotsByTimeline(projectShots, projectBeats);
+}
+
+/**
+ * Pure mapper from a shot row to DirectingSettings. slotSeconds is derived
+ * from the shot's timeline bounds (endInBeat - startInBeat), degrading to
+ * null when either bound is missing.
+ */
+export function settingsFromShot(shot: Shot): DirectingSettings {
+  return {
+    imagePath: shot.imagePath!,
+    motionPrompt: shot.motionPrompt,
+    clipModel: shot.clipModel,
+    cameraMove: shot.cameraMove,
+    cameraStrength: shot.cameraStrength,
+    endsOn: (shot.endsOn ?? "free") as "free" | "next" | "custom",
+    endFramePath: shot.endFramePath,
+    endFrameStatus: shot.endFrameStatus,
+    clipDurationChoice: shot.clipDurationChoice ?? null,
+    negativePrompt: shot.negativePrompt,
+    useEntityRefs: shot.useEntityRefs,
+    referencedEntityIds: shot.referencedEntityIds ?? [],
+    slotSeconds:
+      shot.startInBeat != null && shot.endInBeat != null ? shot.endInBeat - shot.startInBeat : null,
+  };
+}
+
+/**
+ * Resolves and renders a clip from DirectingSettings: uploads the start
+ * (and resolved end) frame, resolves entity references, camera, negative
+ * prompt and duration, calls fal, and writes the result to outputR2Key.
+ * Reads the shot row ONLY for the timeline-order next-shot lookup (needed
+ * for endsOn: "next") and to scope entity reference loading — it never
+ * mutates the shots table. Shared by the real shot pathway
+ * (generateShotClip) and AI-director candidate rendering, so both take
+ * the exact same resolution logic.
+ */
+export async function renderDirectedClip(
+  project: Project,
+  shotId: string,
+  settings: DirectingSettings,
+  outputR2Key: string,
+): Promise<GenerateShotClipResult> {
+  const spec =
+    getClipModel(settings.clipModel) ?? getClipModel(DEFAULT_CLIP_MODEL_ID)!;
+
+  console.log(
+    `[shot-clip] project=${project.id} shot=${shotId} model=${spec.id} | motion: ${settings.motionPrompt.substring(0, 120)}...`,
+  );
+
+  const ordered = await loadOrderedProjectShots(project.id);
+  const currentIndex = ordered.findIndex((s) => s.id === shotId);
+  const nextShot = currentIndex >= 0 ? (ordered[currentIndex + 1] ?? null) : null;
+
+  const endFrame = resolveEndFrame({
+    endsOn: settings.endsOn,
+    endFramePath: settings.endFramePath,
+    endFrameStatus: settings.endFrameStatus,
+    spec,
+    nextShot: nextShot ?? null,
+  });
+
+  const imageUrl = await uploadR2ObjectToFal(settings.imagePath, {
+    fileName: "shot-image.png",
+    contentType: "image/png",
+  });
+  const tailImageUrl = endFrame.tailImagePath
+    ? await uploadR2ObjectToFal(endFrame.tailImagePath, {
+        fileName: "shot-tail-image.png",
+        contentType: "image/png",
+      })
+    : undefined;
+
+  const refs = await resolveAndUploadReferences(project, settings, spec);
+
+  const cameraSelected = settings.cameraMove && isCameraMove(settings.cameraMove);
+  const strength: CameraStrength =
+    settings.cameraStrength && isCameraStrength(settings.cameraStrength) ? settings.cameraStrength : "medium";
+  const cameraBestEffort = Boolean(cameraSelected && !spec.supportsCameraControl);
+  const prompt = cameraBestEffort
+    ? `${settings.motionPrompt} ${cameraPromptSuffix(settings.cameraMove as CameraMove, strength)}`
+    : settings.motionPrompt;
+
+  const negativePrompt = spec.supportsNegativePrompt
+    ? (settings.negativePrompt?.trim() || project.negativePrompt?.trim() || undefined)
+    : undefined;
+
+  const durationSeconds = resolveClipDuration(spec, settings.slotSeconds, settings.clipDurationChoice ?? null);
+
+  const result = await fal.subscribe(spec.falEndpoint, {
+    input: spec.buildInput({
+      imageUrl,
+      prompt,
+      tailImageUrl,
+      ...(cameraSelected && spec.supportsCameraControl
+        ? { camera: { move: settings.cameraMove as CameraMove, strength } }
+        : {}),
+      ...(negativePrompt ? { negativePrompt } : {}),
+      durationSeconds,
+      ...(refs.referenceImageUrls ? { referenceImageUrls: refs.referenceImageUrls } : {}),
+    }),
+    logs: true,
+    onQueueUpdate: (update) => {
+      if (update.status === "IN_PROGRESS" && "logs" in update) {
+        update.logs?.map((log) => log.message).forEach((msg) => console.log(`[shot-clip] ${msg}`));
+      }
+    },
+  });
+
+  const output = result.data as { video?: { url: string; duration?: number } };
+  if (!output.video?.url) throw new Error(`${spec.label} returned no video`);
+  // Fall back to the duration we REQUESTED, not the model default —
+  // Kling v3 honors the request but omits duration in its response
+  // (observed live: requested 4s, real file 4.04s, response had none).
+  const clipDuration = output.video.duration ?? durationSeconds;
+
+  const videoRes = await fetch(output.video.url);
+  if (!videoRes.ok) throw new Error("Failed to download generated clip");
+  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+
+  await r2Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME!,
+      Key: outputR2Key,
+      Body: videoBuffer,
+      ContentType: "video/mp4",
+    }),
+  );
+
+  const endFrameSkippedReason = settings.endsOn !== "free" ? endFrame.skipReason : undefined;
+  console.log(
+    `[shot-clip] done: ${outputR2Key} (${clipDuration}s, ${spec.id}` +
+      `${endFrameSkippedReason ? `, end frame skipped: ${endFrameSkippedReason}` : endFrame.tailImagePath ? ", end frame applied" : ""}` +
+      `${cameraBestEffort ? ", camera best-effort" : ""}, refs=${refs.refsApplied})`,
+  );
+  return {
+    clipPath: outputR2Key,
+    clipUrl: await getDownloadUrl(outputR2Key),
+    clipDurationSeconds: Math.round(clipDuration),
+    clipModel: spec.id,
+    ...(endFrameSkippedReason ? { endFrameSkippedReason } : {}),
+    ...(cameraBestEffort ? { cameraBestEffort } : {}),
+    ...(refs.refsApplied ? { refsApplied: refs.refsApplied } : {}),
+    ...(refs.refsSkippedReason ? { refsSkippedReason: refs.refsSkippedReason } : {}),
+  };
+}
+
 export async function generateShotClip(
   project: Project,
   shot: Shot,
   opts?: { model?: string },
 ): Promise<GenerateShotClipResult> {
-  const spec =
-    getClipModel(opts?.model) ??
-    getClipModel(shot.clipModel) ??
-    getClipModel(DEFAULT_CLIP_MODEL_ID)!;
-
   await db.update(shots).set({ clipStatus: "generating" }).where(eq(shots.id, shot.id));
 
   try {
-    console.log(
-      `[shot-clip] project=${project.id} shot=${shot.id} model=${spec.id} | motion: ${shot.motionPrompt.substring(0, 120)}...`,
-    );
-
-    const projectBeats = await db
-      .select({ id: beats.id, sortOrder: beats.sortOrder })
-      .from(beats)
-      .where(eq(beats.projectId, project.id))
-      .orderBy(asc(beats.sortOrder));
-    const projectShots = await db
-      .select({
-        id: shots.id,
-        beatId: shots.beatId,
-        startInBeat: shots.startInBeat,
-        sortOrder: shots.sortOrder,
-        imagePath: shots.imagePath,
-        imageStatus: shots.imageStatus,
-      })
-      .from(shots)
-      .where(eq(shots.projectId, project.id));
-    const ordered = orderShotsByTimeline(projectShots, projectBeats);
-    const currentIndex = ordered.findIndex((s) => s.id === shot.id);
-    const nextShot = currentIndex >= 0 ? (ordered[currentIndex + 1] ?? null) : null;
-
-    const endFrame = resolveEndFrame({
-      endsOn: (shot.endsOn ?? "free") as "free" | "next" | "custom",
-      endFramePath: shot.endFramePath,
-      endFrameStatus: shot.endFrameStatus,
-      spec,
-      nextShot: nextShot ?? null,
-    });
-
-    const imageUrl = await uploadR2ObjectToFal(shot.imagePath!, {
-      fileName: "shot-image.png",
-      contentType: "image/png",
-    });
-    const tailImageUrl = endFrame.tailImagePath
-      ? await uploadR2ObjectToFal(endFrame.tailImagePath, {
-          fileName: "shot-tail-image.png",
-          contentType: "image/png",
-        })
-      : undefined;
-
-    const refs = await resolveAndUploadReferences(project, shot, spec);
-
-    const cameraSelected = shot.cameraMove && isCameraMove(shot.cameraMove);
-    const strength: CameraStrength =
-      shot.cameraStrength && isCameraStrength(shot.cameraStrength) ? shot.cameraStrength : "medium";
-    const cameraBestEffort = Boolean(cameraSelected && !spec.supportsCameraControl);
-    const prompt = cameraBestEffort
-      ? `${shot.motionPrompt} ${cameraPromptSuffix(shot.cameraMove as CameraMove, strength)}`
-      : shot.motionPrompt;
-
-    const negativePrompt = spec.supportsNegativePrompt
-      ? (shot.negativePrompt?.trim() || project.negativePrompt?.trim() || undefined)
-      : undefined;
-
-    const slotSeconds =
-      shot.startInBeat != null && shot.endInBeat != null ? shot.endInBeat - shot.startInBeat : null;
-    const durationSeconds = resolveClipDuration(spec, slotSeconds, shot.clipDurationChoice ?? null);
-
-    const result = await fal.subscribe(spec.falEndpoint, {
-      input: spec.buildInput({
-        imageUrl,
-        prompt,
-        tailImageUrl,
-        ...(cameraSelected && spec.supportsCameraControl
-          ? { camera: { move: shot.cameraMove as CameraMove, strength } }
-          : {}),
-        ...(negativePrompt ? { negativePrompt } : {}),
-        durationSeconds,
-        ...(refs.referenceImageUrls ? { referenceImageUrls: refs.referenceImageUrls } : {}),
-      }),
-      logs: true,
-      onQueueUpdate: (update) => {
-        if (update.status === "IN_PROGRESS" && "logs" in update) {
-          update.logs?.map((log) => log.message).forEach((msg) => console.log(`[shot-clip] ${msg}`));
-        }
-      },
-    });
-
-    const output = result.data as { video?: { url: string; duration?: number } };
-    if (!output.video?.url) throw new Error(`${spec.label} returned no video`);
-    // Fall back to the duration we REQUESTED, not the model default —
-    // Kling v3 honors the request but omits duration in its response
-    // (observed live: requested 4s, real file 4.04s, response had none).
-    const clipDuration = output.video.duration ?? durationSeconds;
-
-    const videoRes = await fetch(output.video.url);
-    if (!videoRes.ok) throw new Error("Failed to download generated clip");
-    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    const settings = settingsFromShot(shot);
+    // opts.model is trusted PRE-VALIDATED (both callers gate on isClipModelId).
+    // An invalid string here would overwrite the shot's model and silently fall
+    // back to the registry default inside renderDirectedClip — validate at the
+    // boundary, never pass raw client input.
+    if (opts?.model) settings.clipModel = opts.model;
 
     const r2Key = `projects/${project.id}/shots/${shot.id}/clip.mp4`;
-    await r2Client.send(
-      new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME!,
-        Key: r2Key,
-        Body: videoBuffer,
-        ContentType: "video/mp4",
-      }),
-    );
+    const result = await renderDirectedClip(project, shot.id, settings, r2Key);
 
     // SFX is invalidated by a new clip: the old audio no longer matches.
     await db
       .update(shots)
       .set({
-        clipPath: r2Key,
+        clipPath: result.clipPath,
         clipStatus: "done",
-        clipDurationSeconds: Math.round(clipDuration),
-        clipModel: spec.id,
+        clipDurationSeconds: result.clipDurationSeconds,
+        clipModel: result.clipModel,
         sfxPath: null,
         sfxStatus: "pending",
       })
       .where(eq(shots.id, shot.id));
 
-    const endFrameSkippedReason = shot.endsOn !== "free" ? endFrame.skipReason : undefined;
-    console.log(
-      `[shot-clip] done: ${r2Key} (${clipDuration}s, ${spec.id}` +
-        `${endFrameSkippedReason ? `, end frame skipped: ${endFrameSkippedReason}` : endFrame.tailImagePath ? ", end frame applied" : ""}` +
-        `${cameraBestEffort ? ", camera best-effort" : ""}, refs=${refs.refsApplied})`,
-    );
-    return {
-      clipPath: r2Key,
-      clipUrl: await getDownloadUrl(r2Key),
-      clipDurationSeconds: Math.round(clipDuration),
-      clipModel: spec.id,
-      ...(endFrameSkippedReason ? { endFrameSkippedReason } : {}),
-      ...(cameraBestEffort ? { cameraBestEffort } : {}),
-      ...(refs.refsApplied ? { refsApplied: refs.refsApplied } : {}),
-      ...(refs.refsSkippedReason ? { refsSkippedReason: refs.refsSkippedReason } : {}),
-    };
+    return result;
   } catch (error) {
     await db.update(shots).set({ clipStatus: "failed" }).where(eq(shots.id, shot.id)).catch(() => {});
     throw error;

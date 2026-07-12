@@ -73,6 +73,23 @@ async function downloadAndStore(sourceUrl: string, r2Key: string): Promise<void>
 }
 
 /**
+ * Runs an R2-stored image through Kontext with an edit instruction and
+ * stores the result at outputR2Key. Shared by editShotImage/
+ * createShotEndFrame (both against shot.imagePath) and, from Task 10, the
+ * AI Assistant Director's edit_start_image/create_custom_end_frame tools
+ * (against the run's scratch imagePath) — this is the one place that owns
+ * the fal call + R2 write; callers own status lifecycle/DB persistence.
+ */
+export async function runKontextEditToKey(
+  sourceR2Key: string,
+  instruction: string,
+  outputR2Key: string,
+): Promise<void> {
+  const editedUrl = await runKontextEdit(sourceR2Key, instruction);
+  await downloadAndStore(editedUrl, outputR2Key);
+}
+
+/**
  * Edits the shot's primary image in place (overwrites image.png). Caller
  * must ensure shot.imagePath is set and shot.imageStatus is "done".
  */
@@ -86,9 +103,8 @@ export async function editShotImage(
   try {
     console.log(`[shot-frame-edit] editing image project=${project.id} shot=${shot.id}`);
 
-    const editedUrl = await runKontextEdit(shot.imagePath!, instruction);
     const r2Key = `projects/${project.id}/shots/${shot.id}/image.png`;
-    await downloadAndStore(editedUrl, r2Key);
+    await runKontextEditToKey(shot.imagePath!, instruction, r2Key);
 
     // The image just changed underneath any previously authored end
     // frame, so its "done" status is now stale — flag it for re-roll
@@ -132,9 +148,8 @@ export async function createShotEndFrame(
   try {
     console.log(`[shot-frame-edit] creating end frame project=${project.id} shot=${shot.id}`);
 
-    const editedUrl = await runKontextEdit(shot.imagePath!, instruction);
     const r2Key = `projects/${project.id}/shots/${shot.id}/end-frame.png`;
-    await downloadAndStore(editedUrl, r2Key);
+    await runKontextEditToKey(shot.imagePath!, instruction, r2Key);
 
     await db
       .update(shots)
