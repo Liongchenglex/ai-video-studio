@@ -3,17 +3,24 @@
  * shot's resolvable AI Assistant Director run (`awaiting_approval` or
  * `stopped`, per `resolvableRunForShot`) with one of three actions:
  *
- *   - `approve` — requires a clip candidate on the run. Executes
- *     `promotionPlan` (Task 13's pure mapper in director-resolve.ts):
- *     R2 `CopyObjectCommand`s promote the candidate clip (and, when the
+ *   - `approve` — requires a clip candidate on the run. The run's status is
+ *     claimed FIRST, via a conditional UPDATE (`claimRunApproval`) whose
+ *     affected-rows check is the race guard — only the claim's winner may
+ *     touch the shot, closing the window where a losing approve could
+ *     mutate the shot right before a concurrent reject/dismiss won the
+ *     race. Only after the claim succeeds does the route execute
+ *     `promotionPlan` (Task 13's pure mapper in director-resolve.ts): R2
+ *     `CopyObjectCommand`s promote the candidate clip (and, when the
  *     director edited them, the scratch still / custom end frame) onto the
  *     shot's standard keys, then the shot row is patched with the
- *     directing settings that produced the candidate. Only once that
- *     succeeds does the run's status flip to `approved` — via a
- *     conditional UPDATE (`claimRunApproval`) so two racing approve
- *     requests can't both win the promotion. Checked proposals
- *     (`approvedProposalIds`, indexes into the run's `proposals` jsonb
- *     array) are applied last, each as an independent entities-row
+ *     directing settings that produced the candidate. If either step
+ *     throws after the claim, the route best-effort compensates — appends
+ *     a run `error` event describing the partial promotion, restores the
+ *     run's status to `awaiting_approval` (safe as a plain UPDATE, since
+ *     the claim already excluded other racers), and returns a 500; a retry
+ *     re-runs the (idempotent, overwrite-safe) copies and patch. Checked
+ *     proposals (`approvedProposalIds`, indexes into the run's `proposals`
+ *     jsonb array) are applied last, each as an independent entities-row
  *     description update scoped to this project; a proposal failure is
  *     reported per-item and never un-promotes the already-approved clip.
  *   - `reject` — appends `note` (if given) onto the run's `guidance` via
@@ -33,7 +40,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, shots, entities } from "@/lib/db/schema";
+import { projects, shots, entities, directorRuns } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   getSession,
@@ -45,7 +52,12 @@ import {
   applyRateLimit,
 } from "@/lib/api-utils";
 import { copyObject } from "@/lib/r2";
-import { resolvableRunForShot, claimRunApproval, claimRunRejection } from "@/lib/director/director-run";
+import {
+  resolvableRunForShot,
+  claimRunApproval,
+  claimRunRejection,
+  appendRunEvent,
+} from "@/lib/director/director-run";
 import { promotionPlan, buildRejectionGuidance } from "@/lib/director/director-resolve";
 
 type Params = { params: Promise<{ id: string; shotId: string }> };
@@ -149,6 +161,9 @@ async function applyApprovedProposals(
     const entityId = proposal?.entityId;
     const to = proposal?.to;
     try {
+      if (proposal?.field !== "description") {
+        throw new Error("Unsupported proposal field.");
+      }
       if (typeof entityId !== "string" || !isValidUUID(entityId) || typeof to !== "string") {
         throw new Error("Malformed proposal entry.");
       }
@@ -203,20 +218,40 @@ export async function POST(request: NextRequest, { params }: Params) {
       return badRequestResponse("This run has no candidate clip to approve");
     }
 
-    const { shotPatch, copyOps } = promotionPlan(run);
-
-    // Order matters (Task 13 brief): R2 copies → shot patch → run status →
-    // proposals. A failure in either of the first two propagates as a
-    // request failure (run stays resolvable — retry-safe, since copies are
-    // plain overwrites and the run's status hasn't moved yet).
-    for (const op of copyOps) {
-      await copyObject(op.from, op.to);
-    }
-    await db.update(shots).set(shotPatch).where(eq(shots.id, shotId));
-
+    // Order matters (fixed per review — claim FIRST): claim → R2 copies →
+    // shot patch → proposals. The conditional-UPDATE claim is the race
+    // guard, so its winner is the only request allowed to touch the shot;
+    // running the copies/patch before the claim let a losing request mutate
+    // the shot and still lose the race to a concurrent reject/dismiss,
+    // leaving the shot promoted while the run ended up rejected.
     const won = await claimRunApproval(run.id);
     if (!won) {
       return NextResponse.json({ error: "This run was already resolved" }, { status: 409 });
+    }
+
+    const { shotPatch, copyOps } = promotionPlan(run);
+
+    try {
+      for (const op of copyOps) {
+        await copyObject(op.from, op.to);
+      }
+      await db.update(shots).set(shotPatch).where(eq(shots.id, shotId));
+    } catch (err) {
+      // The claim already won, so a failure here leaves the promotion
+      // partial (some copies may have landed; the shot patch may or may
+      // not have run). Best-effort compensate: record what happened and
+      // restore the run to awaiting_approval — a plain UPDATE is safe
+      // because the claim already excluded every other racer, so nothing
+      // else can be resolving this run concurrently — then report failure.
+      // A retried approve re-runs promotionPlan's copies (plain overwrites)
+      // and re-patches the shot, so this is safe to retry.
+      const message = err instanceof Error ? err.message : "Unknown error promoting candidate.";
+      await appendRunEvent(run.id, "error", {
+        step: "approve",
+        message: `Partial promotion while applying candidate: ${message}`,
+      });
+      await db.update(directorRuns).set({ status: "awaiting_approval" }).where(eq(directorRuns.id, run.id));
+      return NextResponse.json({ error: "Failed to promote approved candidate" }, { status: 500 });
     }
 
     const proposalResults = await applyApprovedProposals(id, run.proposals ?? [], approvedProposalIds);

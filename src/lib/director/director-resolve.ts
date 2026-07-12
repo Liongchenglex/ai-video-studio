@@ -39,9 +39,11 @@ export interface PromotionPlan {
  * the shape this module assumes and validates nothing beyond presence.
  */
 interface DirectorSettingsSnapshot {
-  imagePath: string;
   motionPrompt: string;
-  clipModel: string | null;
+  // clipModel is deliberately absent: promotionPlan always takes the
+  // promoted clip's model from run.candidateModel (the model that actually
+  // produced the approved candidate), never from the snapshot's own
+  // clipModel (the model requested at finalize time, which may differ).
   cameraMove: string | null;
   cameraStrength: string | null;
   endsOn: "free" | "next" | "custom";
