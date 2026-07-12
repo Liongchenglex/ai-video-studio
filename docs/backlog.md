@@ -716,3 +716,31 @@ Non-blocking items from feat/directing-controls per-task + final reviews (MERGE 
   switch model later; generation fires a skip note).
 
 **Tag:** quality, directing-controls
+
+## Feature 20 — AI Assistant Director (final-review + security-review triage, 2026-07-12)
+
+Merge-blockers were fixed on-branch (d0a5976: presign scoping + frameKeys strip,
+budget hard-stop at loop boundaries, stopped-with-candidate approval card,
+frame-sample failure resilience, terminal-status replay guard). Recorded minors:
+
+- Verdict-card "Reject & retry" budget select only offers the three presets — an
+  API-started run with a custom budget (e.g. 0.25) prefills a value the select
+  doesn't contain; add the run's own budget as an option.
+- A post-render `edit_start_image` without a follow-up `generate_candidate_clip`
+  lets approve promote a scratch still the candidate wasn't rendered from —
+  consider flagging staleness in the verdict card settings diff.
+- `meterUsage` cost events can report a stale `runningTotal` under replay (spend
+  itself is SQL-increment-safe; display-only).
+- `record_critique`/`finish` free-text fields have no maxLength in the tool
+  schema (bounded in practice by max_tokens 2000); add caps for consistency.
+- Anthropic token spend is metered post-call; the boundary hard-stop caps
+  overshoot at one iteration's calls (~$0.05–0.30). Accepted residual.
+- `tag_entity`/`untag_entity` and approve's settings write blind-overwrite
+  `shots.referencedEntityIds` from run-local state — a human edit mid-run can be
+  clobbered on approve (inherited human-PATCH last-write-wins pattern).
+- Storyboard 🎬 badges only populate for shots whose director state has been
+  polled this session (selection-lazy); a project-load run sweep would fix.
+- Assess step attaches frame keys to critique events even when frame persistence
+  failed (post-d0a5976 the run survives; feed may show broken thumbnails).
+
+**Tag:** quality, ai-director

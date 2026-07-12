@@ -411,3 +411,22 @@ the rest require a live browser session and are left for the
 controller's Task 15 Step 4 pass. Section 4 (paid end-to-end, the hero
 run) requires real Anthropic + fal.ai spend and explicit user
 go-ahead — left PENDING for Task 15 Step 4.
+
+**Task 15 Step 4 results (2026-07-12).** Section 3 UI: PASS — live
+browser pass on the smoke project with psql-seeded runs ($0): verdict
+card copy verbatim, settings diff, proposal checkbox default-unchecked;
+Approve promoted settings + checked proposal (run → approved); Dismiss
+→ rejected + history row; no-candidate runs disable Approve with an
+explainer; stopped-with-candidate renders the "Stopped — candidate so
+far" card (post-hardening fix d0a5976); storyboard 🎬 pulse badge
+(title "AI Director running"); one-active-run-per-shot index rejected
+a duplicate seed. Section 4 hero run: **PASS** — run `855809fd`,
+budget $1.50, spent $0.624 all-inclusive. assess-1 vision critique
+read the lantern staging against the VO (still lowered vs "raises his
+lantern"; recognized the authored custom end frame as the bridge),
+staged fixes (entity refs on, negative prompt), rendered a kling-v3-pro
+4s candidate ($0.45), assess-2 watched the render and confirmed "keeper
+smoothly lifting the lantern from waist to eye level — matches", 
+finished quality=pass; UI Approve promoted the candidate (shot:
+clip/model/duration/refs/negative prompt, SFX reset, ends-on custom
+preserved; run → approved).
