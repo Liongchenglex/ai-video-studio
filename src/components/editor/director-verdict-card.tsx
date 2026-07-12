@@ -114,9 +114,12 @@ function computeSettingsDiff(shot: EditorShot, run: DirectorRunView): string {
   const newDuration = formatDuration(readNumber(snap, "clipDurationChoice"));
   if (oldDuration !== newDuration) rows.push(`Duration: ${oldDuration} → ${newDuration}`);
 
-  const oldModel = formatModel(shot.clipModel);
-  const newModel = formatModel(run.candidateModel);
-  if (oldModel !== newModel) rows.push(`Clip model: ${oldModel} → ${newModel}`);
+  // Skip clip model row if there's no candidate model (best-effort finish)
+  if (run.candidateModel) {
+    const oldModel = formatModel(shot.clipModel);
+    const newModel = formatModel(run.candidateModel);
+    if (oldModel !== newModel) rows.push(`Clip model: ${oldModel} → ${newModel}`);
+  }
 
   const oldRefsOn = shot.useEntityRefs ? "on" : "off";
   const newRefsOn = readBool(snap, "useEntityRefs", shot.useEntityRefs) ? "on" : "off";
@@ -266,6 +269,12 @@ export function DirectorVerdictCard({ shot, run }: { shot: EditorShot; run: Dire
         </div>
       )}
 
+      {!run.candidateUrl && (
+        <p className="rounded bg-muted p-2 text-xs text-muted-foreground">
+          No candidate clip was produced — the director finished with settings changes only.
+        </p>
+      )}
+
       {run.verdict && <p className="text-xs">{run.verdict}</p>}
 
       {settingsDiff && (
@@ -293,7 +302,7 @@ export function DirectorVerdictCard({ shot, run }: { shot: EditorShot; run: Dire
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="default" onClick={handleApprove} disabled={busy}>
+        <Button size="sm" variant="default" onClick={handleApprove} disabled={busy || !run.candidateUrl}>
           {approving ? (
             <Loader2 className="mr-1 h-3 w-3 animate-spin" />
           ) : (
