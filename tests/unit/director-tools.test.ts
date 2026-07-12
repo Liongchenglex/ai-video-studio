@@ -178,6 +178,11 @@ describe("DIRECTOR_TOOLS registry invariants", () => {
   it("has 16 tools registered", () => {
     expect(DIRECTOR_TOOLS).toHaveLength(16);
   });
+
+  it("only propose_entity_update is marked sharedStateEdit: true", () => {
+    const sharedStateEditTools = DIRECTOR_TOOLS.filter((t) => t.sharedStateEdit).map((t) => t.name);
+    expect(sharedStateEditTools).toEqual(["propose_entity_update"]);
+  });
 });
 
 describe("Kontext tools (edit_start_image, create_custom_end_frame)", () => {

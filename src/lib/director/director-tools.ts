@@ -110,7 +110,11 @@ export interface DirectorTool {
    * estimate.
    */
   estCostUsd(input: Record<string, unknown>, ctx?: DirectorRunCtx): number;
-  /** True for tools that mutate real, shared state outside the run's scratch (entity tag/create — Stage 2). */
+  /**
+   * True if the tool only records a proposal for user approval (e.g., propose_entity_update).
+   * Tools marked with this flag never write to real shared state — they only read and call
+   * ctx.addProposal to stage the change for later human review.
+   */
   sharedStateEdit?: boolean;
   execute(ctx: DirectorRunCtx, input: Record<string, unknown>): Promise<DirectorToolResult>;
 }
@@ -425,7 +429,6 @@ export const DIRECTOR_TOOLS: DirectorTool[] = [
       required: ["name", "type"],
     },
     estCostUsd: () => 0,
-    sharedStateEdit: true,
     execute: async (ctx, input) => {
       const nameRaw = input.name;
       if (typeof nameRaw !== "string") {
@@ -495,7 +498,6 @@ export const DIRECTOR_TOOLS: DirectorTool[] = [
       required: ["entityId"],
     },
     estCostUsd: () => 0.04,
-    sharedStateEdit: true,
     execute: async (ctx, input) => {
       const entityId = input.entityId;
       if (typeof entityId !== "string" || !isValidUUID(entityId)) {
@@ -536,7 +538,6 @@ export const DIRECTOR_TOOLS: DirectorTool[] = [
       required: ["entityId"],
     },
     estCostUsd: () => 0,
-    sharedStateEdit: true,
     execute: async (ctx, input) => {
       const entityId = input.entityId;
       if (typeof entityId !== "string" || !isValidUUID(entityId)) {
@@ -578,7 +579,6 @@ export const DIRECTOR_TOOLS: DirectorTool[] = [
       required: ["entityId"],
     },
     estCostUsd: () => 0,
-    sharedStateEdit: true,
     execute: async (ctx, input) => {
       const entityId = input.entityId;
       if (typeof entityId !== "string" || !isValidUUID(entityId)) {
