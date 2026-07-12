@@ -49,6 +49,7 @@ import {
 } from "@/lib/clip-models";
 import { CAMERA_MOVES } from "@/lib/clip-camera";
 import { orderShotsByTimeline } from "@/lib/shot-beat-mapping";
+import { DirectorVerdictCard } from "@/components/editor/director-verdict-card";
 import {
   useEditor,
   absoluteShotRange,
@@ -1266,9 +1267,10 @@ function ShotEditPanel({
 // Three states per shot, driven entirely by directorState[shot.id] (Task
 // 8): at rest (budget/guidance/start — no run, or a terminal one the user
 // can restart), running (live feed + Stop), and awaiting_approval (history
-// row + a muted placeholder — the verdict card itself is Task 14). A run
-// counts as "active" (blocks a fresh start, matches the route's own 409
-// check) for status running OR awaiting_approval.
+// row + the verdict card — DirectorVerdictCard, Task 14 — which owns
+// approve/reject-retry/dismiss). A run counts as "active" (blocks a fresh
+// start, matches the route's own 409 check) for status running OR
+// awaiting_approval.
 
 const DIRECTOR_BUDGET_OPTIONS = [0.75, 1.5, 3.0];
 const DIRECTOR_DEFAULT_BUDGET = 1.5;
@@ -1405,9 +1407,9 @@ function DirectorGroup({ shot }: { shot: EditorShot }) {
           </Button>
         </div>
       ) : run?.status === "awaiting_approval" ? (
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <p className="text-[10px] text-muted-foreground">{directorHistoryLabel(run)}</p>
-          <p className="text-[10px] italic text-muted-foreground">verdict UI lands in Stage 3</p>
+          <DirectorVerdictCard shot={shot} run={run} />
         </div>
       ) : (
         <div className="space-y-1.5">
