@@ -24,10 +24,13 @@ import {
   type DirectorRun,
   type DirectorEvent,
 } from "@/lib/db/schema";
-import { eq, and, or, gt, asc, desc, sql } from "drizzle-orm";
+import { eq, and, or, gt, asc, desc, sql, isNotNull } from "drizzle-orm";
 
 /** Statuses that make a run "in flight" for the shot — blocks a second start and is what stop targets. */
 const ACTIVE_STATUSES = ["running", "awaiting_approval"] as const;
+
+/** Statuses the resolve route (Task 13) may act on — a run that finished with, or without, a stop request. */
+const RESOLVABLE_STATUSES = ["awaiting_approval", "stopped"] as const;
 
 /**
  * Inserts a new director_runs row in the default `running` status. Does NOT
@@ -176,4 +179,73 @@ export async function activeRunForShot(shotId: string): Promise<DirectorRun | nu
     .orderBy(desc(directorRuns.createdAt))
     .limit(1);
   return run ?? null;
+}
+
+/**
+ * The shot's most recent run that the resolve route (Task 13) can act on
+ * (`awaiting_approval` or `stopped`), if any. Unlike `activeRunForShot`,
+ * "resolvable" includes `stopped` — a stopped run's candidate-so-far, if
+ * it has one, is still approvable.
+ */
+export async function resolvableRunForShot(shotId: string): Promise<DirectorRun | null> {
+  const [run] = await db
+    .select()
+    .from(directorRuns)
+    .where(
+      and(
+        eq(directorRuns.shotId, shotId),
+        or(...RESOLVABLE_STATUSES.map((status) => eq(directorRuns.status, status))),
+      ),
+    )
+    .orderBy(desc(directorRuns.createdAt))
+    .limit(1);
+  return run ?? null;
+}
+
+/**
+ * Atomically flips a run to `approved` iff it is still in a resolvable
+ * status AND still has a clip candidate — the race guard that stops two
+ * concurrent "approve" requests from both promoting. Returns true iff this
+ * call won the race (the caller should treat `false` as a 409 conflict,
+ * not retry the promotion). Deliberately does NOT check the run's status
+ * before racing — the conditional UPDATE's WHERE clause is the single
+ * source of truth so the check-and-act is one round trip.
+ */
+export async function claimRunApproval(runId: string): Promise<boolean> {
+  const rows = await db
+    .update(directorRuns)
+    .set({ status: "approved" })
+    .where(
+      and(
+        eq(directorRuns.id, runId),
+        or(...RESOLVABLE_STATUSES.map((status) => eq(directorRuns.status, status))),
+        isNotNull(directorRuns.clipCandidatePath),
+      ),
+    )
+    .returning({ id: directorRuns.id });
+  return rows.length > 0;
+}
+
+/**
+ * Atomically flips a run to `rejected` iff it is still in a resolvable
+ * status — used by both "reject" (which passes the new guidance text with
+ * the user's note appended) and "dismiss" (which omits `guidance` so the
+ * existing value, if any, is left untouched). Same race-guard shape as
+ * `claimRunApproval`; returns true iff this call won the race.
+ */
+export async function claimRunRejection(runId: string, guidance?: string | null): Promise<boolean> {
+  const patch: { status: "rejected"; guidance?: string | null } = { status: "rejected" };
+  if (guidance !== undefined) patch.guidance = guidance;
+
+  const rows = await db
+    .update(directorRuns)
+    .set(patch)
+    .where(
+      and(
+        eq(directorRuns.id, runId),
+        or(...RESOLVABLE_STATUSES.map((status) => eq(directorRuns.status, status))),
+      ),
+    )
+    .returning({ id: directorRuns.id });
+  return rows.length > 0;
 }

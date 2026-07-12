@@ -3,7 +3,13 @@
  * Provides S3-compatible access to R2 for uploading and retrieving
  * project assets (reference images, generated previews, etc.).
  */
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  CopyObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID!;
@@ -58,6 +64,22 @@ export async function deleteObject(key: string): Promise<void> {
   const command = new DeleteObjectCommand({
     Bucket: R2_BUCKET_NAME,
     Key: key,
+  });
+  await r2Client.send(command);
+}
+
+/**
+ * Copies an object within the bucket (server-side, no download/re-upload).
+ * Used by the AI Director resolve route to promote a run's candidate
+ * assets onto a shot's standard keys. Both `fromKey`/`toKey` must be
+ * caller-validated (built only from validated UUIDs) before calling this —
+ * `CopySource` is not itself re-validated here.
+ */
+export async function copyObject(fromKey: string, toKey: string): Promise<void> {
+  const command = new CopyObjectCommand({
+    Bucket: R2_BUCKET_NAME,
+    CopySource: `${R2_BUCKET_NAME}/${fromKey}`,
+    Key: toKey,
   });
   await r2Client.send(command);
 }
